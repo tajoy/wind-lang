@@ -1,0 +1,8 @@
+[package]
+name = "windc"
+version = "0.1.0"
+authors = ["Jacky <jacky.tajoy@gmail.com>"]
+
+[dependencies]
+log = "0.4"
+wind-core = { path = "../core" }
