@@ -1,10 +1,12 @@
 
+
+mod code;
+
 pub struct Pos {
-    line: i64,
-    column: i64,
+    offset: i64,
 }
 
-pub struct Range<'a> {
-    at: &'a Pos,
+pub struct Range {
+    offset: i64,
     length: i64,
 }

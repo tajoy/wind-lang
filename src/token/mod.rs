@@ -9,6 +9,6 @@ pub struct Token<'a> {
 }
 
 pub trait Tokenizer<'a> {
-    fn feed(self, pos: &core::Pos, ch: char) -> Option<(Token<'a>, core::Range<'a>)>;
+    fn feed(self, pos: &core::Pos, ch: char) -> Option<(Token<'a>, core::Range)>;
 }
 
