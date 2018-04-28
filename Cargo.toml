@@ -1,0 +1,16 @@
+[package]
+name = "wind-lang"
+version = "0.0.1"
+authors = ["Jacky <jacky.tajoy@gmail.com>"]
+
+[lib]
+name = "windlib"
+path = "src/lib.rs"
+
+[[bin]]
+name = "windc"
+path = "src/windc/main.rs"
+
+[dependencies]
+log = "0.4"
+llvm-sys = "60"

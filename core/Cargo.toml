@@ -1,8 +1,0 @@
-[package]
-name = "wind-core"
-version = "0.1.0"
-authors = ["Jacky <jacky.tajoy@gmail.com>"]
-
-[dependencies]
-log = "0.4"
-llvm-sys = "60"
