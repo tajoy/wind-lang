@@ -1,0 +1,10 @@
+[GLOBAL]
+C_PATH=''
+CPP_PATH=''
+LD_PATH=''
+CFLAGS=[]
+LDFLAGS=[]
+ROOT_PATH=''
+
+
+
