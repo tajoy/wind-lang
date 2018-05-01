@@ -1,10 +1,9 @@
-[GLOBAL]
-C_PATH=''
-CPP_PATH=''
-LD_PATH=''
-CFLAGS=[]
-LDFLAGS=[]
-ROOT_PATH=''
-
-
+ninja_required_version = "1.8"
+temp_path = 'build/'
+default = "windc"
+include = [
+  'rules.toml',
+  'src/build.toml',
+  'tests/build.toml',
+]
 

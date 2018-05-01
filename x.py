@@ -8,11 +8,8 @@ ROOT_DIR = os.path.dirname(os.path.realpath(__file__))
 SCRIPTS_DIR = os.path.join(ROOT_DIR, 'scripts')
 sys.path.append(SCRIPTS_DIR)
 
-print SCRIPTS_DIR
-
+import thirdparty
 from cmds import RootCommand
-
-
 
 def main():
     RootCommand().run()

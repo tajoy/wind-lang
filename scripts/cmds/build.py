@@ -8,14 +8,11 @@ import os
 from argparse import ArgumentParser
 
 
-try:
-    import toml
-except ImportError:
-    os.system('pip install toml')
-    import toml
 
 from . import Command
 
+
+from build import build
 
 class BuildCommand(Command):
     def __init__(self):
@@ -26,4 +23,4 @@ class BuildCommand(Command):
         parser.add_argument('--ld-flags', type=str)
 
     def execute(self, args):
-        pass
+        build(args)

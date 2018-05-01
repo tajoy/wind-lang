@@ -1,4 +1,4 @@
-#!/bin/env python2
+#!/usr/bin/env python2
 # -*- coding: UTF-8 -*-
 
 
@@ -6,7 +6,11 @@
 
 from argparse import ArgumentParser
 
+import abc
+
 class Command(object):
+    __metaclass__ = abc.ABCMeta
+
     def __init__(self, name, *args, **kvargs):
         self.name = name
         self.args = args
@@ -19,6 +23,7 @@ class Command(object):
             raise TypeError('can not add an instance that is not Command!')
         self.sub_commands[command.name] = command
 
+    @abc.abstractmethod
     def build_parser(self, parser):
         pass
 
@@ -26,8 +31,8 @@ class Command(object):
         parser = ArgumentParser(*self.args, **self.kvargs)
         self.build_parser(parser)
         subparsers = parser.add_subparsers(title='sub-commands')
-        for (name, command) in self.sub_commands:
-            subparser = subparsers.add_parser(*command.args, **command.kvargs)
+        for name, command in self.sub_commands.items():
+            subparser = subparsers.add_parser(command.name, *command.args, **command.kvargs)
             command.build_parser(subparser)
             def __set_name(args):
                 self.sub_command = name

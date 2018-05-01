@@ -3,8 +3,10 @@
 
 import os
 import re
+import abc
 
 class ContextDict(dict):
+
     RE_FUNC = re.compile(r'{([^:}]+):([^:}]+)}')
     RE_REPLACE = re.compile(r'{([^}]+)}')
 
@@ -12,7 +14,7 @@ class ContextDict(dict):
         super(ContextDict, self).__init__()
         if context_dict is None:
             context_dict = {}
-        if not isinstance(context_dict, type({})):
+        if not isinstance(context_dict, dict):
             raise TypeError('require dictionary but it is ' + str(type(context_dict)))
         # for key, value in context_dict.items():
         #     context_dict[unicode(key)] = unicode(value)
@@ -20,7 +22,10 @@ class ContextDict(dict):
         ext_lambda = lambda path: os.path.basename(path).split(os.path.extsep)[1]
         self._context_dict = {}
         for k, v in context_dict.items():
-            self._context_dict[k.lower()] = v
+            if isinstance(v, dict):
+                self._context_dict[k.lower()] = ContextDict(v)
+            else:
+                self._context_dict[k.lower()] = v
         self._context_func_dict = {
             "basename": os.path.basename,
             "dirname": os.path.dirname,
@@ -36,18 +41,125 @@ class ContextDict(dict):
         item = self._context_dict[name]
         if isinstance(item, type(lambda: None)):
             return item()
-        return item
+        if isinstance(item, str) or isinstance(item, unicode):
+            return self.format(item)
+        else:
+            return item
+
+    def __dict__(self):
+        d = {}
+        for key in self._context_dict.keys():
+            d[key] = self[key]
+        return self._context_dict
         
+    def __cmp__(self, other):
+        if isinstance(other, ContextDict):
+            return self._context_dict.__cmp__(other._context_dict)
+        return self._context_dict.__cmp__(other)
+        
+    def __contains__(self, key):
+        return self._context_dict.__contains__(key)
+        
+    def __delattr__(self, name):
+        return self._context_dict.__delattr__(name)
+
     def __setitem__(self, name, value):
-        name = name.lower()
-        self._context_dict[name] = value
+        self.set(name, value)
         
     def __getitem__(self, name):
-        name = name.lower()
-        item = self._context_dict[name]
+        return self.get(name)
+
+    def __delitem__(self, name):
+        self._context_dict.__delitem__(name)
+        
+    def __eq__(self, other):
+        if isinstance(other, ContextDict):
+            return self._context_dict.__eq__(other._context_dict)
+        return self._context_dict.__eq__(other)
+
+    def __hash__(self):
+        return self._context_dict.__hash__()
+        
+    def __iter__(self):
+        raise NotImplementedError
+
+    def __len__(self):
+        return self._context_dict.__len__()
+
+    def clear(self):
+        self._context_dict.clear()
+
+    def has_key(self, key):
+        return self._context_dict.has_key(key)
+
+    def keys(self):
+        return self._context_dict.keys()
+
+    def pop(self, *args, **kvargs):
+        item = self._context_dict.pop(*args, **kvargs)
         if isinstance(item, type(lambda: None)):
-            return item()
-        return self.format(item)
+            item = item()
+        if isinstance(item, str) or isinstance(item, unicode):
+            return self.format(item)
+        else:
+            return item
+
+    def fromkeys(self, *args, **kvargs):
+        raise NotImplementedError
+
+    def items(self, *args, **kvargs):
+        raise NotImplementedError
+
+    def iteritems(self, *args, **kvargs):
+        raise NotImplementedError
+
+    def iterkeys(self, *args, **kvargs):
+        raise NotImplementedError
+
+    def popitem(self):
+        (key, item) = self._context_dict.popitem()
+        if isinstance(item, type(lambda: None)):
+            item = item()
+        if isinstance(item, str) or isinstance(item, unicode):
+            return key, self.format(item)
+        else:
+            return key, item
+
+    def setdefault(self, *args, **kvargs):
+        item = self._context_dict.setdefault(*args, **kvargs)
+        if isinstance(item, type(lambda: None)):
+            item = item()
+        if isinstance(item, str) or isinstance(item, unicode):
+            return self.format(item)
+        else:
+            return item
+
+    def update(self, d):
+        for key, value in d.items():
+            key = key.lower()
+            self._context_dict[key] = value
+
+    def values(self):
+        items = self._context_dict.values()
+        ret_items = []
+        for item in items:
+            if isinstance(item, type(lambda: None)):
+                ret_items.append(item())
+            else:
+                if isinstance(item, str) or isinstance(item, unicode):
+                    ret_items.append(self.format(item))
+                else:
+                    ret_items.append(item)
+        return ret_items
+
+    def viewitems(self, *args, **kvargs):
+        raise NotImplementedError
+
+    def viewkeys(self, *args, **kvargs):
+        raise NotImplementedError
+
+    def viewvalues(self, *args, **kvargs):
+        raise NotImplementedError
 
     def register_func(self, name, func):
         name = name.lower()
@@ -55,13 +167,37 @@ class ContextDict(dict):
             raise TypeError('require function or lambda but it is ' + str(type(func)))
         self._context_func_dict[name] = func
 
-    def get(self, name):
+    def get(self, name, default=None):
         name = name.lower()
-        return self._context_dict[name]
+        if default is None:
+            item = self._context_dict.get(name)
+        else:
+            item = self._context_dict.get(name, default)
+        if isinstance(item, str) or isinstance(item, unicode):
+            return self.format(item)
+        else:
+            return item
+    
+    def getOrDefault(self, name, default=None):
+        name = name.lower()
+        if default is None:
+            item = self._context_dict.get(name)
+        else:
+            item = self._context_dict.get(name, default)
+            self.set(name, default)
+        if isinstance(item, str) or isinstance(item, unicode):
+            return self.format(item)
+        else:
+            return item
 
     def set(self, name, value):
         name = name.lower()
-        self._context_dict[name] = value
+        if isinstance(value, dict):
+            self._context_dict[name] = ContextDict(value)
+        elif isinstance(value, type(lambda _: None)):
+            self.register_func(name, value)
+        else:
+            self._context_dict[name] = value
 
     def format(self, text):
         context_dict = {}
@@ -108,6 +244,9 @@ class ContextDict(dict):
             self._context_dict[key] = value
         return self
 
+    def copy(self):
+        return self.clone()
+
     def clone(self):
         return ContextDict(dict(self._context_dict))
 
@@ -118,8 +257,10 @@ class ContextDict(dict):
         ret += '-' * 20 + '\n'
         return ret
 
+
 def main():
     ctx = ContextDict()
+    print isinstance(ctx, dict)
     ctx['test'] = 'test'
     ctx['test1'] = '{PATH}|{TEST}'
     ctx['test2'] = '{home}|{Test}'
