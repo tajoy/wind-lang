@@ -50,3 +50,6 @@
 
 # python bytecode file
 *.pyc
+
+# vscode settings
+/.vscode/

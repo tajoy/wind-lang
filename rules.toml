@@ -1,5 +1,8 @@
-[[rule.cc]]
-command = 'gcc -c $in -o $out'
+[[rule]]
+name = 'testc'
+command = 'cc -c $in -o $out'
 
-[[rule.ld]]
+[[rule]]
+name = 'testcpp'
+command = 'c++ -c $in -o $out'
 

@@ -15,12 +15,14 @@ class Command(object):
         self.name = name
         self.args = args
         self.kvargs = kvargs
+        self.parent_command = None
         self.sub_command = None
         self.sub_commands = {}
     
     def add_subcommand(self, command):
         if not isinstance(command, Command):
             raise TypeError('can not add an instance that is not Command!')
+        command.parent_command = self
         self.sub_commands[command.name] = command
 
     @abc.abstractmethod
@@ -34,11 +36,9 @@ class Command(object):
         for name, command in self.sub_commands.items():
             subparser = subparsers.add_parser(command.name, *command.args, **command.kvargs)
             command.build_parser(subparser)
-            def __set_name(args):
-                self.sub_command = name
-            subparser.set_defaults(func=__set_name)
-        self.sub_command = None
-        ret = parser.parse_args()
+            subparser.set_defaults(sub_command=name)
+        ret = vars(parser.parse_args())
+        self.sub_command = ret.pop('sub_command', None)
         return self.sub_command, ret
     
     def run(self):
@@ -55,10 +55,14 @@ class Command(object):
 
 
 from build import BuildCommand
+from generate import GenerateCommand
+from clean import CleanCommand
 class RootCommand(Command):
     def __init__(self):
         super(RootCommand, self).__init__('root')
+        self.add_subcommand(GenerateCommand())
         self.add_subcommand(BuildCommand())
+        self.add_subcommand(CleanCommand())
 
     def build_parser(self, parser):
         pass

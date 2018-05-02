@@ -105,16 +105,21 @@ class ContextDict(dict):
             return item
 
     def fromkeys(self, *args, **kvargs):
-        raise NotImplementedError
+        return ContextDict(self._context_dict.fromkeys(*args, **kvargs))
 
-    def items(self, *args, **kvargs):
-        raise NotImplementedError
+    def items(self):
+        items = []
+        for key in self._context_dict.keys():
+            items.append((key, self.get(key), ))
+        return items
 
     def iteritems(self, *args, **kvargs):
-        raise NotImplementedError
+        for key in self._context_dict.keys():
+            yield key, self.get(key)
 
     def iterkeys(self, *args, **kvargs):
-        raise NotImplementedError
+        for key in self._context_dict.keys():
+            yield key
 
     def popitem(self):
         (key, item) = self._context_dict.popitem()
@@ -153,13 +158,13 @@ class ContextDict(dict):
         return ret_items
 
     def viewitems(self, *args, **kvargs):
-        raise NotImplementedError
+        return set(self.items())
 
     def viewkeys(self, *args, **kvargs):
-        raise NotImplementedError
+        return set(self.keys())
 
     def viewvalues(self, *args, **kvargs):
-        raise NotImplementedError
+        return set(self.values())
 
     def register_func(self, name, func):
         name = name.lower()

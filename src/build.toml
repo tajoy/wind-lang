@@ -1,0 +1,25 @@
+[[target]]
+name = 'windcore'
+type = 'static_library'
+include_dirs = [
+    '.',
+]
+sources = [
+    'core/*.c',
+    'token/*.c',
+]
+
+
+[[target]]
+name = 'winc'
+type = 'executable'
+dependencies = [
+    'wincore',
+]
+include_dirs = [
+    '.',
+    'windc/',
+]
+sources = [
+    'windc/*.c',
+]
