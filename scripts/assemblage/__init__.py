@@ -54,14 +54,30 @@ def ensure_dir(path):
         os.makedirs(path)
 
 def exists_executable(path):
-    return os.path.isfile(path) and os.access(path, os.X_OK)
+    if path is None:
+        return False
+    return os.path.isfile(path)# and os.access(path, os.X_OK)
 
-def find_exec_path(exec_name, paths):
-    for path in paths:
+def find_exec_path(config_ctx, exec_name):
+    cross_compile_root = config_ctx.get('__cross_compile_root', None)
+    bin_paths = os.environ['PATH'].split(os.path.pathsep)
+    if cross_compile_root is not None:
+        bin_paths = [
+            cross_compile_root,
+            os.path.join(cross_compile_root, 'bin'),
+            os.path.join(cross_compile_root, 'sbin'),
+            os.path.join(cross_compile_root, 'local', 'bin'),
+            os.path.join(cross_compile_root, 'local', 'sbin'),
+            os.path.join(cross_compile_root, 'usr', 'bin'),
+            os.path.join(cross_compile_root, 'usr', 'sbin'),
+            os.path.join(cross_compile_root, 'usr', 'local', 'bin'),
+            os.path.join(cross_compile_root, 'usr', 'local', 'sbin'),
+        ]
+    for path in bin_paths:
         exec_path = os.path.join(path, exec_name)
         if exists_executable(exec_path):
             return exec_path
-    raise IOError('can not found executable:' + exec_name)
+    return None
 
 
 def glob_in_path(curdir, glob_path):
@@ -81,8 +97,8 @@ def full_real_path(curdir, rel_path):
 def get_rel_path(config_ctx, ninja_path, rel_path):
     full_path = None
     if not rel_path.startswith('/'):
-        if '___include_toml_path' in config_ctx:
-            toml_dir = os.path.dirname(config_ctx['___include_toml_path'])
+        if '__include_toml_path' in config_ctx:
+            toml_dir = os.path.dirname(config_ctx['__include_toml_path'])
             temp_path = os.path.join(toml_dir, rel_path)
             if full_path is None and os.path.exists(temp_path):
                 full_path = temp_path
@@ -101,8 +117,8 @@ def get_rel_path(config_ctx, ninja_path, rel_path):
 def get_rel_glob_path(config_ctx, ninja_path, glob_path):
     paths = []
     if not glob_path.startswith('/'):
-        if '___include_toml_path' in config_ctx:
-            toml_dir = os.path.dirname(config_ctx['___include_toml_path'])
+        if '__include_toml_path' in config_ctx:
+            toml_dir = os.path.dirname(config_ctx['__include_toml_path'])
             temp_path = glob_in_path(toml_dir, glob_path)
             if len(temp_path) > 0:
                 paths += [full_real_path(toml_dir, p) for p in temp_path]
@@ -127,20 +143,28 @@ def run_cmd(prog, args):
         stdout=subprocess.PIPE,
         stderr=subprocess.STDOUT
     )
-    cmd.wait()
-    return cmd.stdout.read()
+    ret_code = cmd.wait()
+    output = cmd.stdout.read()
+    if ret_code != 0:
+        raise StandardError(output)
+    return output
 
 
-def detect_sequence_in_lines_args(lines_args, sequence):
-    len_sequence = len(sequence)
-    for i in xrange(0, len(lines_args)):
-        args = lines_args[i]
-        for i in xrange(0, len(args) - len_sequence):
-            if args[i : i + len_sequence] == sequence:
-                return args[:i] + args[i + len_sequence:]
-    return None
+def detect_sequence_in_lines_args(lines_args, sequences):
+    ret = []
+    for sequence in sequences:
+        len_sequence = len(sequence)
+        for i in xrange(0, len(lines_args)):
+            args = lines_args[i]
+            for i in xrange(0, len(args) - len_sequence + 1):
+                if args[i : i + len_sequence] == sequence:
+                    ret.append(args[:i] + args[i + len_sequence:])
+                    break
+    return ret
 
-def strip_lines_args(lines_args1, lines_args2):
+def strip_lines_args(lines_args1, lines_args2, excludes_args=None):
+    if excludes_args is None:
+        excludes_args = []
     if len(lines_args1) > len(lines_args2):
         lines_args2, lines_args1 = lines_args1, lines_args2
     lines_args = []
@@ -148,13 +172,33 @@ def strip_lines_args(lines_args1, lines_args2):
         args = []
         args1 = lines_args1[i]
         args2 = lines_args2[i]
-        if len(args1) > 0 and args1[0].find('=') >= 0:
+        len_args1 = len(args1)
+        len_args2 = len(args2)
+        if len_args1 > 0 and args1[0].find('=') >= 0:
             args1 = args1[0].split('=')[1:] + args1[1:]
-        if len(args2) > 0 and args2[0].find('=') >= 0:
+        if len_args2 > 0 and args2[0].find('=') >= 0:
             args2 = args2[0].split('=')[-1:] + args2[1:]
-        if len(args1) > len(args2):
+        if args1 == args2:
+            lines_args.append(args1)
+            continue
+        if len_args1 > len_args2:
             args2, args1 = args1, args2
-        for j in xrange(0, len(args1)):
+        ex_count = 0
+        for j in xrange(0, len_args1):
+            for ex_args in excludes_args:
+                len_ex_args = len(ex_args)
+                if len_args1 - j >= len_ex_args:
+                    if args1[j:j+len_ex_args] == ex_args:
+                        args += args1[j:j+len_ex_args]
+                        ex_count = len_ex_args
+                        break
+                    if args2[j:j+len_ex_args] == ex_args:
+                        args += args2[j:j+len_ex_args]
+                        ex_count = len_ex_args
+                        break
+            if ex_count > 0:
+                ex_count -= 1
+                continue
             arg1 = args1[j]
             arg2 = args2[j]
             if arg1 == arg2:
@@ -162,134 +206,143 @@ def strip_lines_args(lines_args1, lines_args2):
         lines_args.append(args)
     return lines_args
 
-def detect_ld_magic_flags(config_ctx, ninja_path, cc_path):
-    pass
+def detect_flags(config_ctx, ninja_path, bin_path, in_suffix, out_suffix, flags):
+    hello1_path = calc_temp_path(config_ctx, os.path.join('__detect', 'hello' + in_suffix))
+    out1_path = calc_temp_path(config_ctx, os.path.join('__detect', 'hello' + out_suffix))
+    hello2_path = calc_temp_path(config_ctx, os.path.join('__detect', 'hello2', 'hello2' + in_suffix))
+    out2_path = calc_temp_path(config_ctx, os.path.join('__detect', 'hello2', 'hello2' + out_suffix))
+    if os.path.exists(hello1_path):
+        os.remove(hello1_path)
+    ensure_dir(os.path.dirname(hello1_path))
+    with open(hello1_path, 'w') as hello_file:
+        hello_file.write("")
+    ensure_dir(os.path.dirname(hello2_path))
+    shutil.copyfile(hello1_path, hello2_path)
+    output1 = run_cmd(bin_path, flags + [hello1_path, '-o', out1_path, '-###'])
+    lines_args1 = [shlex.split(line) for line in output1.splitlines()]
+    output2 = run_cmd(bin_path, flags + [hello2_path, '-o', out2_path, '-###'])
+    lines_args2 = [shlex.split(line) for line in output2.splitlines()]
+    lines_args = strip_lines_args(lines_args1, lines_args2, [
+        ['-o', out1_path],
+        ['-o', out2_path],
+    ])
+    return detect_sequence_in_lines_args(lines_args, [
+        ['-o', out1_path],
+        ['-o', out2_path],
+    ])
+
+def detect_c_magic_flags(config_ctx, ninja_path, cc_path):
+    all_args = detect_flags(config_ctx, ninja_path, cc_path, '.c', '.o', ['-c'])
+    for args in all_args:
+        if args[0] == 'as':
+            config_ctx.set('__is_need_as', True)
+            continue
+        if os.path.exists(args[0]) or find_exec_path(config_ctx, args[0]) is not None:
+            return '"%s"' % ('" "'.join(args[1:]))
+    return '"%s"' % ('" "'.join(all_args[-1]))
+
+def detect_cpp_magic_flags(config_ctx, ninja_path, cpp_path):
+    all_args = detect_flags(config_ctx, ninja_path, cpp_path, '.cpp', '.o', ['-c'])
+    for args in all_args:
+        if args[0] == 'as':
+            config_ctx.set('__is_need_as', True)
+            continue
+        if os.path.exists(args[0]) or find_exec_path(config_ctx, args[0]) is not None:
+            return '"%s"' % ('" "'.join(args[1:]))
+    return '"%s"' % ('" "'.join(all_args[-1]))
 
 def detect_as_c_magic_flags(config_ctx, ninja_path, cc_path):
-    hello1_path = calc_temp_path(config_ctx, os.path.join('__detect', 'hello.c'))
-    out1_path = calc_temp_path(config_ctx, os.path.join('__detect', 'hello.s'))
-    hello2_path = calc_temp_path(config_ctx, os.path.join('__detect', 'hello2', 'hello2.c'))
-    out2_path = calc_temp_path(config_ctx, os.path.join('__detect', 'hello2', 'hello2.s'))
-    if os.path.exists(hello1_path):
-        os.remove(hello1_path)
-    ensure_dir(os.path.dirname(hello1_path))
-    with open(hello1_path, 'w') as hello_file:
-        hello_file.write(
-"""
-#include <stdio.h>
-#include <stdlib.h>
-int main(int argc, char** args) {
-    return 0;
-}
-""")
-    ensure_dir(os.path.dirname(hello2_path))
-    shutil.copyfile(hello1_path, hello2_path)
-    output1 = run_cmd(cc_path, ['-S', hello1_path, '-o', out1_path, '-###'])
-    lines_args1 = [shlex.split(line) for line in output1.splitlines()]
-    output2 = run_cmd(cc_path, ['-S', hello2_path, '-o', out2_path, '-###'])
-    lines_args2 = [shlex.split(line) for line in output2.splitlines()]
-    lines_args = strip_lines_args(lines_args1, lines_args2)
-    args = detect_sequence_in_lines_args(lines_args, ['-S', hello1_path, '-o', out1_path])
-    if args is not None:
-        return args
-    args = detect_sequence_in_lines_args(lines_args, ['-S', hello2_path, '-o', out2_path])
-    if args is not None:
-        return args
-    return ''
+    all_args = detect_flags(config_ctx, ninja_path, cc_path, '.c', '.s', ['-S'])
+    for args in all_args:
+        if os.path.exists(args[0]) or find_exec_path(config_ctx, args[0]) is not None:
+            return '"%s"' % ('" "'.join(args[1:]))
+    return '"%s"' % ('" "'.join(all_args[-1]))
 
 def detect_as_cpp_magic_flags(config_ctx, ninja_path, cpp_path):
-    hello1_path = calc_temp_path(config_ctx, os.path.join('__detect', 'hello.cpp'))
-    out1_path = calc_temp_path(config_ctx, os.path.join('__detect', 'hello.s'))
-    hello2_path = calc_temp_path(config_ctx, os.path.join('__detect', 'hello2', 'hello2.cpp'))
-    out2_path = calc_temp_path(config_ctx, os.path.join('__detect', 'hello2', 'hello2.s'))
-    if os.path.exists(hello1_path):
-        os.remove(hello1_path)
-    ensure_dir(os.path.dirname(hello1_path))
-    with open(hello1_path, 'w') as hello_file:
-        hello_file.write(
-"""
-#include <iostream>
-#include <stdio.h>
-#include <stdlib.h>
-int main(int argc, char** args) {
-    return 0;
-}
-""")
-    ensure_dir(os.path.dirname(hello2_path))
-    shutil.copyfile(hello1_path, hello2_path)
+    all_args = detect_flags(config_ctx, ninja_path, cpp_path, '.cpp', '.s', ['-S'])
+    for args in all_args:
+        if os.path.exists(args[0]) or find_exec_path(config_ctx, args[0]) is not None:
+            return '"%s"' % ('" "'.join(args[1:]))
+    return '"%s"' % ('" "'.join(all_args[-1]))
 
-    output1 = run_cmd(cpp_path, ['-S', hello1_path, '-o', out1_path, '-###'])
-    lines_args1 = [shlex.split(line) for line in output1.splitlines()]
-    output2 = run_cmd(cpp_path, ['-S', hello2_path, '-o', out2_path, '-###'])
-    lines_args2 = [shlex.split(line) for line in output2.splitlines()]
-
-def detect_object_magic_flags(config_ctx, ninja_path, cc_path, c_file):
-    pass
+def detect_obj_magic_flags(config_ctx, ninja_path, cc_path):
+    all_args = detect_flags(config_ctx, ninja_path, cc_path, '.s', '.o', ['-c'])
+    for args in all_args:
+        if os.path.exists(args[0]) or find_exec_path(config_ctx, args[0]) is not None:
+            return '"%s"' % ('" "'.join(args[1:]))
+    return '"%s"' % ('" "'.join(all_args[-1]))
     
+def detect_ld_magic_flags(config_ctx, ninja_path, cc_path):
+    all_args = detect_flags(config_ctx, ninja_path, cc_path, '.o', '', [])
+    for args in all_args:
+        if os.path.exists(args[0]) or find_exec_path(config_ctx, args[0]) is not None:
+            return '"%s"' % ('" "'.join(args[1:]))
+    return '"%s"' % ('" "'.join(all_args[-1]))
+
 
 def embed_ninja(config_ctx, ninja_path, ninja_writer):
-    cc_exec = config_ctx.get('__cc_exec', 'cc')
-    cpp_exec = config_ctx.get('__cpp_exec', 'cpp')
+    cc_exec = config_ctx.get('__cc_exec', 'gcc')
+    cpp_exec = config_ctx.get('__cpp_exec', 'g++')
     ld_exec = config_ctx.get('__ld_exec', 'ld')
     as_exec = config_ctx.get('__as_exec', 'as')
     cc_path = config_ctx.get('__cc_path', None)
     cpp_path = config_ctx.get('__cpp_path', None)
     ld_path = config_ctx.get('__ld_path', None)
     as_path = config_ctx.get('__as_path', None)
-    cross_compile_root = config_ctx.get('__cross_compile_root', None)
-    bin_paths = os.environ['PATH'].split(os.path.pathsep)
-    if cross_compile_root is not None:
-        bin_paths = [
-            cross_compile_root,
-            os.path.join(cross_compile_root, 'bin'),
-            os.path.join(cross_compile_root, 'sbin'),
-            os.path.join(cross_compile_root, 'local', 'bin'),
-            os.path.join(cross_compile_root, 'local', 'sbin'),
-            os.path.join(cross_compile_root, 'user', 'bin'),
-            os.path.join(cross_compile_root, 'user', 'sbin'),
-            os.path.join(cross_compile_root, 'user', 'local', 'bin'),
-            os.path.join(cross_compile_root, 'user', 'local', 'sbin'),
-        ]
     if cc_path is None:
-        cc_path = find_exec_path(cc_exec, bin_paths)
+        cc_path = find_exec_path(config_ctx, cc_exec)
+        if cc_exec == 'gcc' and cc_path is None:
+            cc_path = find_exec_path(config_ctx, 'cc')
     if cpp_path is None:
-        cpp_path = find_exec_path(cpp_exec, bin_paths)
+        cpp_path = find_exec_path(config_ctx, cpp_exec)
+        if cc_exec == 'g++' and cc_path is None:
+            cc_path = find_exec_path(config_ctx, 'cpp')
     if ld_path is None:
-        ld_path = find_exec_path(ld_exec, bin_paths)
+        ld_path = find_exec_path(config_ctx, ld_exec)
     if as_path is None:
-        as_path = find_exec_path(as_exec, bin_paths)
+        as_path = find_exec_path(config_ctx, as_exec)
 
     if not exists_executable(cc_path):
         raise IOError('executable file not exists or can not execute:' + cc_exec)
     if not exists_executable(cpp_path):
         raise IOError('executable file not exists or can not execute:' + cpp_exec)
     if not exists_executable(ld_path):
-        raise IOError('executable file not exists or can not execute:' + ld_exec)
+        as_path = cc_path
     if not exists_executable(as_path):
-        raise IOError('executable file not exists or can not execute:' + as_exec)
+        as_path = cc_path
 
     cc_flags = config_ctx.get('__cc_flags', '')
     cpp_flags = config_ctx.get('__cpp_flags', '')
+    as_c_flags = cc_flags + ' ' + config_ctx.get('__as_c_flags', '')
+    as_cpp_flags = cpp_flags + ' ' + config_ctx.get('__as_cpp_flags', '')
+    obj_flags = config_ctx.get('__obj_flags', '')
     ld_flags = config_ctx.get('__ld_flags', '')
-    as_c_flags = config_ctx.get('__as_c_flags', '')
-    as_cpp_flags = config_ctx.get('__as_cpp_flags', '')
+
+    cc_flags += ' ' + detect_c_magic_flags(config_ctx, ninja_path, cc_path)
+    cpp_flags += ' ' + detect_cpp_magic_flags(config_ctx, ninja_path, cpp_path)
+    as_c_flags += ' ' + detect_as_c_magic_flags(config_ctx, ninja_path, cc_path)
+    as_cpp_flags += ' ' + detect_as_cpp_magic_flags(config_ctx, ninja_path, cpp_path)
+    obj_flags += ' ' + detect_obj_magic_flags(config_ctx, ninja_path, cc_path)
+    ld_flags += ' ' + detect_ld_magic_flags(config_ctx, ninja_path, cc_path)
 
     ninja_writer.pool('__link_pool', 1)
 
     ninja_writer.rule(
         '__cc',
-        '"%s" %s $__cc_flags -MMD -MT $out -MF $out.d -c $in -o $out' % (cc_path, cc_flags),
-        description='compile(c) $out',
-        depfile='$out.d',
-        deps='gcc'
+        '"%s" %s $__cc_flags $in -o $out' % (cc_path, cc_flags),
+        description='compile(c) $out'
     )
 
     ninja_writer.rule(
         '__cpp',
-        '"%s" %s $__cpp_flags -MMD -MT $out -MF $out.d -c $in -o $out' % (cpp_path, cpp_flags),
-        description='compile(cpp) $out',
-        depfile='$out.d',
-        deps='gcc'
+        '"%s" %s $__cpp_flags $in -o $out' % (cpp_path, cpp_flags),
+        description='compile(cpp) $out'
+    )
+
+    ninja_writer.rule(
+        '__obj',
+        '"%s" %s $__obj_flags $in -o $out' % (cc_path, obj_flags),
+        description='assemble $out'
     )
 
     ninja_writer.rule(
@@ -300,8 +353,8 @@ def embed_ninja(config_ctx, ninja_path, ninja_writer):
     )
 
     ninja_writer.rule(
-        '__as_c',
-        '"%s" %s $__as_c_flags -o $out $in' % (as_path, as_c_flags),
+        '__as_cc',
+        '"%s" %s $__as_cc_flags -o $out $in' % (as_path, as_c_flags),
         description='assemble C $out'
     )
 
@@ -383,14 +436,11 @@ def write_include_ninja(config_ctx, ninja_path, ninja_writer, data):
         with open(sub_path, 'r') as conf_file:
             config = toml.loads(conf_file.read())
         new_ctx = ContextDict(config)
-        new_ctx = new_ctx.merge({
-            '___include_toml_path': sub_path
-        })
+        for key in config_ctx.keys():
+            if key.startswith('__'):
+                new_ctx[key] = config_ctx[key]
+        new_ctx.set('__include_toml_path', sub_path)
         write_ninja(new_ctx, ninja_path, ninja_writer)
-        # new_ninja_path = sub_path[] + '.ninja'
-        # sub_path = calc_temp_path(config_ctx, sub_path)
-        # generate_ninja(new_ctx, sub_path, is_embed=False)
-        # ninja_writer.include(sub_path)
 
 def write_subninja_ninja(config_ctx, ninja_path, ninja_writer, data):
     sub_path = None
@@ -571,6 +621,54 @@ def find_dependencies(config_ctx, ninja_path, dependencies):
 
     return deps, flags, ldflags
 
+
+def write_target_sources_ninja(config_ctx, ninja_path, ninja_writer, sources, rule_map, rule_flags_map):
+    object_paths = []
+    for source in sources:
+        build_rules = None
+        for rules, pattern in rule_map.items():
+            if pattern.match(source):
+                build_rules = rules
+                break
+        if build_rules is None:
+            raise StandardError('Can not map rule for source: ' + source)
+
+        rules = []
+        for rule in build_rules.split('|'):
+            rule_tuple = rule.split(':')
+            if len(rule_tuple) <= 1:
+                rule_tuple += ['']
+            rule_tuple = rule_tuple[:2]
+            rules.append(rule_tuple)
+
+        in_path = source
+        out_path = source
+        for i in xrange(0, len(rules)):
+            rule_tuple = rules[i]
+            rule = rule_tuple[0]
+            ext = rule_tuple[1]
+            in_path = out_path
+            out_path = in_path + ext
+            out_path = calc_temp_path(config_ctx, out_path)
+            if rule in rule_flags_map:
+                flags_tuple = rule_flags_map[rule]
+                flags_name = flags_tuple[0]
+                flags = flags_tuple[1]
+                ninja_writer.build(
+                    out_path, rule,
+                    inputs=in_path,
+                    variables={
+                        flags_name: flags,
+                    }
+                )
+            else:
+                ninja_writer.build(
+                    out_path, rule,
+                    inputs=in_path
+                )
+        object_paths.append(out_path)
+    return object_paths
+
 def write_target_ninja(config_ctx, ninja_path, ninja_writer, data):
     target = dict(data)
     conditions = [config_ctx.format(i) for i in target.pop('conditions', [])]
@@ -609,21 +707,7 @@ def write_target_ninja(config_ctx, ninja_path, ninja_writer, data):
     cflags = config_ctx.format(target.pop('cflags', ''))
     cppflags = config_ctx.format(target.pop('cppflags', ''))
     ldflags = config_ctx.format(target.pop('ldflags', ''))
-    rule_map = {
-        '__cc': re.compile(r'.*(\.cc|.c)'),
-        '__cpp': re.compile(r'.*(\.cpp|.c\+\+)'),
-    }
-    for key, value in target.pop('rule_map', {}).items():
-        rule_map[key] = config_ctx.format(value)
-
-
-    keys = rule_map.keys()
-    for key in keys:
-        value = rule_map[key]
-        if isinstance(value, (str, unicode, )) and not isinstance(value, RE_PATTERN_TYPE):
-            rule_map[key] = re.compile(value)
-
-    target_map = config_ctx['__target_map']
+    objflags = config_ctx.format(target.pop('objflags', ''))
     deps, dep_flags, dep_ldflags = find_dependencies(config_ctx, ninja_path, dependencies)
     cflags += dep_flags
     cppflags += dep_flags
@@ -638,33 +722,37 @@ def write_target_ninja(config_ctx, ninja_path, ninja_writer, data):
         cflags += ' -D %s' % (define)
         cppflags += ' -D %s' % (define)
 
-    source_paths = []
+    rule_map = {}
+    if config_ctx.get('__is_need_as', False):
+        rule_map['__as_cc:.s|__obj:.o'] = re.compile(r'.*(\.cc|.c)')
+        rule_map['__as_cpp:.s|__obj:.o'] = re.compile(r'.*(\.cpp|.c\+\+)')
+    else:
+        rule_map['__cc:.o'] = re.compile(r'.*(\.cc|.c)')
+        rule_map['__cpp:.o'] = re.compile(r'.*(\.cpp|.c\+\+)')
+    
+    rule_flags_map = {
+        '__cc': ('__cc_flags', cflags),
+        '__cpp': ('__cpp_flags', cppflags),
+        '__as_cc': ('__as_cc_flags', cflags),
+        '__as_cpp': ('__as_cpp_flags', cppflags),
+        '__obj': ('__obj_flags', objflags),
+    }
+    for key, value in target.pop('rule_map', {}).items():
+        rule_map[key] = config_ctx.format(value)
+
+    keys = rule_map.keys()
+    for key in keys:
+        value = rule_map[key]
+        if isinstance(value, (str, unicode, )) and not isinstance(value, RE_PATTERN_TYPE):
+            rule_map[key] = re.compile(value)
+
     object_paths = []
     for source in sources:
         paths = get_rel_glob_path(config_ctx, ninja_path, source)
-        source_paths += paths
-        build_rule = None
-        for p in paths:
-            object_path = calc_temp_path(config_ctx, p + '.o')
-            object_paths.append(object_path)
-            for rule, pattern in rule_map.items():
-                if pattern.match(p):
-                    build_rule = rule
-                    break
-            if build_rule is None:
-                raise StandardError('Can not map rule for source: ' + p)
-            flags = ''
-            if build_rule == '__cc':
-                flags = cflags
-            if build_rule == '__cpp':
-                flags = cppflags
-            ninja_writer.build(
-                object_path, build_rule,
-                inputs=p,
-                variables={
-                    build_rule + '_flags': flags,
-                },
-            )
+        object_paths += write_target_sources_ninja(
+            config_ctx, ninja_path, ninja_writer,
+            paths, rule_map, rule_flags_map
+        )
     inputs = list(object_paths)
 
     if type_name == 'executable':
@@ -704,7 +792,6 @@ def write_target_ninja(config_ctx, ninja_path, ninja_writer, data):
             inputs=output_path
         )
     elif type_name == 'static_library':
-        ldflags += ' -s'
         ldflags += ' -static'
         output_path = calc_temp_path(config_ctx, os.path.join('lib', name))
         if not output_path.endswith('.a'):

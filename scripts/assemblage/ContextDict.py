@@ -189,7 +189,8 @@ class ContextDict(dict):
             item = self._context_dict.get(name)
         else:
             item = self._context_dict.get(name, default)
-            self.set(name, default)
+            if item == default:
+                self.set(name, default)
         if isinstance(item, str) or isinstance(item, unicode):
             return self.format(item)
         else:
