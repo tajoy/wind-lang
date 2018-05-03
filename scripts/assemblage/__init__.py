@@ -9,6 +9,8 @@ import subprocess
 import multiprocessing
 import platform
 import glob
+import shlex
+import shutil
 
 import preconditions
 import toml
@@ -22,6 +24,8 @@ if hasattr(re, '_pattern_type'):
 else:
     RE_PATTERN_TYPE = type(re.compile(''))
 
+REGISTERED_LIBRARY_PLUGINS = {}
+
 
 __all__ = [
     'build',
@@ -29,13 +33,17 @@ __all__ = [
     'clean',
 ]
 
+def as_list(obj):
+    if isinstance(obj, list):
+        return obj
+    return [obj]
+
 def calc_temp_path(config_ctx, path):
     temp_path = config_ctx.getOrDefault('__temp_path', os.path.join(os.path.curdir, 'build'))
     cwd = os.path.realpath(os.path.curdir)
     temp_path = os.path.realpath(temp_path)
-    path = os.path.realpath(path)
     if path.startswith(cwd):
-        retpath = os.path.join(temp_path, path.replace(cwd, ''))
+        retpath = os.path.join(temp_path, path.replace(os.path.join(cwd, ''), ''))
     else:
         retpath = os.path.join(temp_path, path)
     ensure_dir(os.path.dirname(retpath))
@@ -57,14 +65,14 @@ def find_exec_path(exec_name, paths):
 
 
 def glob_in_path(curdir, glob_path):
-    before_dir = os.curdir
+    before_dir = os.path.realpath(os.curdir)
     os.chdir(curdir)
     ret = glob.glob(glob_path)
     os.chdir(before_dir)
     return ret
 
 def full_real_path(curdir, rel_path):
-    before_dir = os.curdir
+    before_dir = os.path.realpath(os.curdir)
     os.chdir(curdir)
     ret = os.path.abspath(os.path.realpath(rel_path))
     os.chdir(before_dir)
@@ -113,13 +121,121 @@ def get_rel_glob_path(config_ctx, ninja_path, glob_path):
         paths = glob.glob(glob_path)
     return paths
 
+def run_cmd(prog, args):
+    cmd = subprocess.Popen(
+        [prog] + args, 
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT
+    )
+    cmd.wait()
+    return cmd.stdout.read()
+
+
+def detect_sequence_in_lines_args(lines_args, sequence):
+    len_sequence = len(sequence)
+    for i in xrange(0, len(lines_args)):
+        args = lines_args[i]
+        for i in xrange(0, len(args) - len_sequence):
+            if args[i : i + len_sequence] == sequence:
+                return args[:i] + args[i + len_sequence:]
+    return None
+
+def strip_lines_args(lines_args1, lines_args2):
+    if len(lines_args1) > len(lines_args2):
+        lines_args2, lines_args1 = lines_args1, lines_args2
+    lines_args = []
+    for i in xrange(0, len(lines_args1)):
+        args = []
+        args1 = lines_args1[i]
+        args2 = lines_args2[i]
+        if len(args1) > 0 and args1[0].find('=') >= 0:
+            args1 = args1[0].split('=')[1:] + args1[1:]
+        if len(args2) > 0 and args2[0].find('=') >= 0:
+            args2 = args2[0].split('=')[-1:] + args2[1:]
+        if len(args1) > len(args2):
+            args2, args1 = args1, args2
+        for j in xrange(0, len(args1)):
+            arg1 = args1[j]
+            arg2 = args2[j]
+            if arg1 == arg2:
+                args.append(arg1)
+        lines_args.append(args)
+    return lines_args
+
+def detect_ld_magic_flags(config_ctx, ninja_path, cc_path):
+    pass
+
+def detect_as_c_magic_flags(config_ctx, ninja_path, cc_path):
+    hello1_path = calc_temp_path(config_ctx, os.path.join('__detect', 'hello.c'))
+    out1_path = calc_temp_path(config_ctx, os.path.join('__detect', 'hello.s'))
+    hello2_path = calc_temp_path(config_ctx, os.path.join('__detect', 'hello2', 'hello2.c'))
+    out2_path = calc_temp_path(config_ctx, os.path.join('__detect', 'hello2', 'hello2.s'))
+    if os.path.exists(hello1_path):
+        os.remove(hello1_path)
+    ensure_dir(os.path.dirname(hello1_path))
+    with open(hello1_path, 'w') as hello_file:
+        hello_file.write(
+"""
+#include <stdio.h>
+#include <stdlib.h>
+int main(int argc, char** args) {
+    return 0;
+}
+""")
+    ensure_dir(os.path.dirname(hello2_path))
+    shutil.copyfile(hello1_path, hello2_path)
+    output1 = run_cmd(cc_path, ['-S', hello1_path, '-o', out1_path, '-###'])
+    lines_args1 = [shlex.split(line) for line in output1.splitlines()]
+    output2 = run_cmd(cc_path, ['-S', hello2_path, '-o', out2_path, '-###'])
+    lines_args2 = [shlex.split(line) for line in output2.splitlines()]
+    lines_args = strip_lines_args(lines_args1, lines_args2)
+    args = detect_sequence_in_lines_args(lines_args, ['-S', hello1_path, '-o', out1_path])
+    if args is not None:
+        return args
+    args = detect_sequence_in_lines_args(lines_args, ['-S', hello2_path, '-o', out2_path])
+    if args is not None:
+        return args
+    return ''
+
+def detect_as_cpp_magic_flags(config_ctx, ninja_path, cpp_path):
+    hello1_path = calc_temp_path(config_ctx, os.path.join('__detect', 'hello.cpp'))
+    out1_path = calc_temp_path(config_ctx, os.path.join('__detect', 'hello.s'))
+    hello2_path = calc_temp_path(config_ctx, os.path.join('__detect', 'hello2', 'hello2.cpp'))
+    out2_path = calc_temp_path(config_ctx, os.path.join('__detect', 'hello2', 'hello2.s'))
+    if os.path.exists(hello1_path):
+        os.remove(hello1_path)
+    ensure_dir(os.path.dirname(hello1_path))
+    with open(hello1_path, 'w') as hello_file:
+        hello_file.write(
+"""
+#include <iostream>
+#include <stdio.h>
+#include <stdlib.h>
+int main(int argc, char** args) {
+    return 0;
+}
+""")
+    ensure_dir(os.path.dirname(hello2_path))
+    shutil.copyfile(hello1_path, hello2_path)
+
+    output1 = run_cmd(cpp_path, ['-S', hello1_path, '-o', out1_path, '-###'])
+    lines_args1 = [shlex.split(line) for line in output1.splitlines()]
+    output2 = run_cmd(cpp_path, ['-S', hello2_path, '-o', out2_path, '-###'])
+    lines_args2 = [shlex.split(line) for line in output2.splitlines()]
+
+def detect_object_magic_flags(config_ctx, ninja_path, cc_path, c_file):
+    pass
+    
+
 def embed_ninja(config_ctx, ninja_path, ninja_writer):
     cc_exec = config_ctx.get('__cc_exec', 'cc')
     cpp_exec = config_ctx.get('__cpp_exec', 'cpp')
     ld_exec = config_ctx.get('__ld_exec', 'ld')
+    as_exec = config_ctx.get('__as_exec', 'as')
     cc_path = config_ctx.get('__cc_path', None)
     cpp_path = config_ctx.get('__cpp_path', None)
     ld_path = config_ctx.get('__ld_path', None)
+    as_path = config_ctx.get('__as_path', None)
     cross_compile_root = config_ctx.get('__cross_compile_root', None)
     bin_paths = os.environ['PATH'].split(os.path.pathsep)
     if cross_compile_root is not None:
@@ -140,6 +256,8 @@ def embed_ninja(config_ctx, ninja_path, ninja_writer):
         cpp_path = find_exec_path(cpp_exec, bin_paths)
     if ld_path is None:
         ld_path = find_exec_path(ld_exec, bin_paths)
+    if as_path is None:
+        as_path = find_exec_path(as_exec, bin_paths)
 
     if not exists_executable(cc_path):
         raise IOError('executable file not exists or can not execute:' + cc_exec)
@@ -147,10 +265,14 @@ def embed_ninja(config_ctx, ninja_path, ninja_writer):
         raise IOError('executable file not exists or can not execute:' + cpp_exec)
     if not exists_executable(ld_path):
         raise IOError('executable file not exists or can not execute:' + ld_exec)
+    if not exists_executable(as_path):
+        raise IOError('executable file not exists or can not execute:' + as_exec)
 
     cc_flags = config_ctx.get('__cc_flags', '')
     cpp_flags = config_ctx.get('__cpp_flags', '')
     ld_flags = config_ctx.get('__ld_flags', '')
+    as_c_flags = config_ctx.get('__as_c_flags', '')
+    as_cpp_flags = config_ctx.get('__as_cpp_flags', '')
 
     ninja_writer.pool('__link_pool', 1)
 
@@ -175,6 +297,18 @@ def embed_ninja(config_ctx, ninja_path, ninja_writer):
         '"%s" %s $__ld_flags -o $out $in' % (ld_path, ld_flags),
         description='link $out',
         pool='__link_pool'
+    )
+
+    ninja_writer.rule(
+        '__as_c',
+        '"%s" %s $__as_c_flags -o $out $in' % (as_path, as_c_flags),
+        description='assemble C $out'
+    )
+
+    ninja_writer.rule(
+        '__as_cpp',
+        '"%s" %s $__as_cpp_flags -o $out $in' % (as_path, as_cpp_flags),
+        description='assemble C++ $out'
     )
 
 
@@ -245,7 +379,11 @@ def write_include_ninja(config_ctx, ninja_path, ninja_writer, data):
     if sub_path.endswith('.ninja'):
         ninja_writer.include(sub_path)
     if sub_path.endswith('.toml'):
-        new_ctx = config_ctx.clone().merge({
+        config = {}
+        with open(sub_path, 'r') as conf_file:
+            config = toml.loads(conf_file.read())
+        new_ctx = ContextDict(config)
+        new_ctx = new_ctx.merge({
             '___include_toml_path': sub_path
         })
         write_ninja(new_ctx, ninja_path, ninja_writer)
@@ -268,9 +406,174 @@ def write_subninja_ninja(config_ctx, ninja_path, ninja_writer, data):
         raise IOError('subninja file not found:' + data)
     ninja_writer.subninja(sub_path)
 
+def register_library_plugin(plugin_name, plugin_or_path):
+    global REGISTERED_LIBRARY_PLUGINS
+    if plugin_name in REGISTERED_LIBRARY_PLUGINS:
+        fn = REGISTERED_LIBRARY_PLUGINS[plugin_name]
+        raise StandardError(
+            'plugin "%s":"%s" plugin name is conflicted with "%s"!' % (
+                plugin_name, plugin_or_path, fn.__code__.co_filename
+            )
+        )
+    if callable(plugin_or_path):
+        fn = plugin_or_path
+        plugin_path = fn.__code__.co_filename
+    else:
+        g = {}
+        execfile(plugin_path, g)
+        if 'find' not in g:
+            raise StandardError(
+                'plugin "%s":"%s" expect "find" function, but not found!' % (
+                    plugin_name, plugin_path
+                )
+            )
+        fn = g['find']
+    if not callable(fn):
+        raise StandardError(
+            'plugin "%s":"%s" expect "find" function, but "find" is not function!' % (
+                plugin_name, plugin_path
+            )
+        )
+    REGISTERED_LIBRARY_PLUGINS[plugin_name] = fn
+
+def find_dependency_by_plugin(config_ctx, ninja_path, plugin_name, plugin_param):
+    global REGISTERED_LIBRARY_PLUGINS
+    plugin_deps = None
+    plugin_flags = None
+    plugin_ldflags = None
+    error = None
+
+    if not plugin_name in REGISTERED_LIBRARY_PLUGINS:
+        error = StandardError('plugin "%s" not found' % (plugin_name))
+        return plugin_deps, plugin_flags, plugin_ldflags, error
+
+    fn = REGISTERED_LIBRARY_PLUGINS[plugin_name]
+    try:
+        plugin_deps, plugin_flags, plugin_ldflags = fn(plugin_param)
+    except Exception as e:
+        error = e
+    return plugin_deps, plugin_flags, plugin_ldflags, error
+    
+def find_dependencies(config_ctx, ninja_path, dependencies):
+    SYSTEM = config_ctx.get('__system', platform.system()).lower()
+    DEFAULT_OS = platform.system()
+    if DEFAULT_OS == 'Darwin':
+        DEFAULT_OS = 'apple'
+    OS = config_ctx.get('__os', DEFAULT_OS).lower()
+    ARCH = config_ctx.get('__arch', platform.machine()).lower()
+    ABI = config_ctx.get('__abi', 'unknown').lower()
+
+    target_map = config_ctx['__target_map']
+    deps = []
+    flags = ''
+    ldflags = ''
+    dependency_target = None
+    re_plugin = re.compile(r'^@plugin:([^/]*)//(.*)')
+    for dependency in dependencies:
+        match_obj = re_plugin.match(dependency)
+        if match_obj:
+            plugin_name = match_obj.group(1)
+            plugin_param = match_obj.group(2)
+            plugin_deps, plugin_flags, plugin_ldflags, error = find_dependency_by_plugin(config_ctx, ninja_path, plugin_name, plugin_param)
+            if plugin_deps is None or plugin_ldflags is None:
+                raise StandardError(
+                    'plugin "%s" can not find out dependency by "%s": \n%s' % (
+                            plugin_name, plugin_param, str(error)
+                        )
+                    )
+            deps += as_list(plugin_deps)
+            flags += plugin_flags
+            ldflags += plugin_ldflags
+            continue
+        
+        dep_paths = get_rel_glob_path(config_ctx, ninja_path, dependency)
+        if len(dep_paths) > 0:
+            for dep_path in dep_paths:
+                dep_dir = os.path.dirname(dep_path)
+                dep_include_dir = os.path.join(dep_dir, 'include')
+                if os.path.isdir(dep_include_dir):
+                    flags += ' -I"%s"' % (dep_include_dir)
+                dep_include_dir = os.path.join(dep_dir, '..', 'include')
+                if os.path.isdir(dep_include_dir):
+                    flags += ' -I"%s"' % (dep_include_dir)
+                if dep_path.endswith('.so') or dep_path.endswith('.dll'):
+                    dep_dir = os.path.dirname(dep_path)
+                    ldflags += ' -L"%s"' % (dep_dir)
+                    dep_basename = os.path.basename(dep_path)
+                    if dep_basename.endswith('.so'):
+                        dep_basename = dep_basename[:-3]
+                        if dep_basename.startswith('lib'):
+                            dep_basename = dep_basename[3:]
+                    if dep_basename.endswith('.dll'):
+                        dep_basename = dep_basename[:-4]
+                    ldflags += ' -l"%s"' % (os.path.basename(dep_basename))
+                    ldflags += ' -rpath"%s"' % (dep_dir)
+                if dep_path.endswith('.a'):
+                    ldflags += ' -L"%s"' % (os.path.dirname(dep_path))
+                    dep_basename = os.path.basename(dep_path)
+                    if dep_basename.startswith('lib'):
+                        dep_basename = dep_basename[3:]
+                    ldflags += ' -l"%s"' % (dep_basename)
+            continue
+
+        if dependency in target_map:
+            dependency_target = target_map[dependency]
+        if dependency.startswith('lib'):
+            dependency = dependency[3:]
+        if dependency in target_map:
+            dependency_target = target_map[dependency]
+        if dependency.endswith('.a'):
+            dependency = dependency[:-2]
+        if dependency in target_map:
+            dependency_target = target_map[dependency]
+        if dependency_target is None:
+            raise StandardError('can not dependency on a executable: ' + dependency)
+        dependency_name = dependency_target['name']
+        dependency_type = dependency_target['type']
+        if 'include_dirs' in dependency_target:
+            dep_include_dirs = dependency_target['include_dirs']
+            for include_dir in dep_include_dirs:
+                full_path = get_rel_path(config_ctx, ninja_path, include_dir) or include_dir
+                flags += ' -I "%s"' % (full_path)
+        if dependency_type == 'executable':
+            raise StandardError('can not dependency on a executable: ' + dependency)
+        elif dependency_type == 'dynamic_library':
+            deps += [dependency_name]
+            dependency_path = calc_temp_path(config_ctx, os.path.join('lib', dependency_name))
+            if OS == 'windows':
+                if not dependency_path.endswith('.dll'):
+                    dependency_path += '.dll'
+            else:
+                if not dependency_path.endswith('.so'):
+                    dependency_path += '.so'
+            ldflags += ' -L"%s"' % (os.path.dirname(dependency_path))
+            dep_basename = os.path.basename(dependency_path)
+            if dep_basename.startswith('lib'):
+                dep_basename = dep_basename[3:]
+            if dep_basename.endswith('.so'):
+                dep_basename = dep_basename[:-3]
+            if dep_basename.endswith('.dll'):
+                dep_basename = dep_basename[:-4]
+            ldflags += ' -l"%s"' % (os.path.basename(dep_basename))
+            ldflags += ' -rpath"%s"' % (os.path.dirname(dependency_path))
+        elif dependency_type == 'static_library':
+            deps += [dependency_name]
+            dependency_path = calc_temp_path(config_ctx, os.path.join('lib', dependency_name))
+            if not dependency_path.endswith('.a'):
+                dependency_path += '.a'
+            ldflags += ' -L"%s"' % (os.path.dirname(dependency_path))
+            dep_basename = os.path.basename(dependency_path)
+            if dep_basename.startswith('lib'):
+                dep_basename = dep_basename[3:]
+            ldflags += ' -l"%s"' % (dep_basename)
+        else:
+            raise StandardError('unknown target type: ' + dependency_type)
+
+    return deps, flags, ldflags
+
 def write_target_ninja(config_ctx, ninja_path, ninja_writer, data):
     target = dict(data)
-    conditions = config_ctx.format(target.pop('conditions', []))
+    conditions = [config_ctx.format(i) for i in target.pop('conditions', [])]
 
     SYSTEM = config_ctx.get('__system', platform.system()).lower()
     DEFAULT_OS = platform.system()
@@ -299,10 +602,10 @@ def write_target_ninja(config_ctx, ninja_path, ninja_writer, data):
 
     name = config_ctx.format(target.pop('name'))
     type_name = config_ctx.format(target.pop('type'))
-    sources = config_ctx.format(target.pop('sources', []))
-    dependencies = config_ctx.format(target.pop('dependencies', []))
-    include_dirs = [config_ctx.format(dirpath) for dirpath in target.pop('include_dirs', [])]
-    defines = config_ctx.format(target.pop('defines', []))
+    sources = [config_ctx.format(i) for i in target.pop('sources', [])]
+    dependencies = [config_ctx.format(i) for i in target.pop('dependencies', [])]
+    include_dirs = [config_ctx.format(i) for i in target.pop('include_dirs', [])]
+    defines = [config_ctx.format(i) for i in target.pop('defines', [])]
     cflags = config_ctx.format(target.pop('cflags', ''))
     cppflags = config_ctx.format(target.pop('cppflags', ''))
     ldflags = config_ctx.format(target.pop('ldflags', ''))
@@ -310,13 +613,21 @@ def write_target_ninja(config_ctx, ninja_path, ninja_writer, data):
         '__cc': re.compile(r'.*(\.cc|.c)'),
         '__cpp': re.compile(r'.*(\.cpp|.c\+\+)'),
     }
-    rule_map.update(target.pop('rule_map', {}))
+    for key, value in target.pop('rule_map', {}).items():
+        rule_map[key] = config_ctx.format(value)
+
+
     keys = rule_map.keys()
     for key in keys:
         value = rule_map[key]
         if isinstance(value, (str, unicode, )) and not isinstance(value, RE_PATTERN_TYPE):
             rule_map[key] = re.compile(value)
 
+    target_map = config_ctx['__target_map']
+    deps, dep_flags, dep_ldflags = find_dependencies(config_ctx, ninja_path, dependencies)
+    cflags += dep_flags
+    cppflags += dep_flags
+    ldflags += dep_ldflags
 
     for include_dir in include_dirs:
         full_path = get_rel_path(config_ctx, ninja_path, include_dir) or include_dir
@@ -330,85 +641,31 @@ def write_target_ninja(config_ctx, ninja_path, ninja_writer, data):
     source_paths = []
     object_paths = []
     for source in sources:
-        source_path = get_rel_path(config_ctx, ninja_path, source) or source
-        source_paths.append(source_path)
-        object_path = calc_temp_path(config_ctx, source_path + '.o')
-        object_paths.append(object_path)
+        paths = get_rel_glob_path(config_ctx, ninja_path, source)
+        source_paths += paths
         build_rule = None
-        for rule, pattern in rule_map.items():
-            if pattern.match(source_path):
-                build_rule = rule
-                break
-        if build_rule is None:
-            raise StandardError('Can not map rule for source: ' + source_path)
-        flags = ''
-        if build_rule == '__cc':
-            flags = cflags
-        if build_rule == '__cpp':
-            flags = cppflags
-        ninja_writer.build(
-            object_path, build_rule,
-            inputs=source_path,
-            variables={
-                build_rule + '_flags': flags,
-            },
-        )
+        for p in paths:
+            object_path = calc_temp_path(config_ctx, p + '.o')
+            object_paths.append(object_path)
+            for rule, pattern in rule_map.items():
+                if pattern.match(p):
+                    build_rule = rule
+                    break
+            if build_rule is None:
+                raise StandardError('Can not map rule for source: ' + p)
+            flags = ''
+            if build_rule == '__cc':
+                flags = cflags
+            if build_rule == '__cpp':
+                flags = cppflags
+            ninja_writer.build(
+                object_path, build_rule,
+                inputs=p,
+                variables={
+                    build_rule + '_flags': flags,
+                },
+            )
     inputs = list(object_paths)
-
-    target_map = config_ctx['__target_map']
-    dependency_target = None
-    for dependency in dependencies:
-        if dependency in target_map:
-            dependency_target = target_map[dependency]
-        if dependency.startswith('lib'):
-            dependency = dependency[3:]
-        if dependency in target_map:
-            dependency_target = target_map[dependency]
-        if dependency.endswith('.a'):
-            dependency = dependency[:-2]
-        if dependency in target_map:
-            dependency_target = target_map[dependency]
-        if dependency_target is not None:
-            type_name = dependency_target['type']
-            if type_name == 'executable':
-                raise StandardError('can not dependency on a executable: ' + dependency)
-            elif type_name == 'dynamic_library':
-                dependency_path = calc_temp_path(config_ctx, os.path.join('lib', name))
-                if OS == 'windows':
-                    if not dependency_path.endswith('.dll'):
-                        dependency_path += '.dll'
-                else:
-                    if not dependency_path.endswith('.so'):
-                        dependency_path += '.so'
-                ldflags += ' -L"%s"' % (os.path.dirname(dependency_path))
-                dependency_name = os.path.basename(dependency_path)
-                if dependency_name.startswith('lib'):
-                    dependency_name = dependency_name[3:]
-                if dependency_name.endswith('.so'):
-                    dependency_name = dependency_name[:-3]
-                if dependency_name.endswith('.dll'):
-                    dependency_name = dependency_name[:-4]
-                ldflags += ' -l"%s"' % (os.path.basename(dependency_name))
-                ldflags += ' -rpath"%s"' % (os.path.dirname(dependency_path))
-            elif type_name == 'static_library':
-                dependency_path = calc_temp_path(config_ctx, os.path.join('lib', name))
-                if OS == 'windows':
-                    if not dependency_path.endswith('.dll'):
-                        dependency_path += '.dll'
-                else:
-                    if not dependency_path.endswith('.so'):
-                        dependency_path += '.so'
-                ldflags += ' -L"%s"' % (os.path.dirname(dependency_path))
-                dependency_name = os.path.basename(dependency_path)
-                if dependency_name.startswith('lib'):
-                    dependency_name = dependency_name[3:]
-                if dependency_name.endswith('.so'):
-                    dependency_name = dependency_name[:-3]
-                if dependency_name.endswith('.dll'):
-                    dependency_name = dependency_name[:-4]
-                ldflags += ' -l"%s"' % (os.path.basename(dependency_name))
-            else:
-                raise StandardError('unknown target type: ' + type_name)
 
     if type_name == 'executable':
         ldflags += ' -execute'
@@ -417,38 +674,51 @@ def write_target_ninja(config_ctx, ninja_path, ninja_writer, data):
             output_path += '.exe'
         ninja_writer.build(
             output_path, '__ld',
-            inputs=' '.join(inputs),
+            inputs=inputs + deps,
             variables={
                 '__ld_flags': ldflags,
             },
+        )
+        ninja_writer.build(
+            name, 'phony',
+            inputs=output_path
         )
     elif type_name == 'dynamic_library':
         ldflags += ' -dynamic'
         output_path = calc_temp_path(config_ctx, os.path.join('lib', name))
         if OS == 'windows':
-            if output_path.endswith('.dll'):
+            if not output_path.endswith('.dll'):
                 output_path += '.dll'
         else:
             if not output_path.endswith('.so'):
                 output_path += '.so'
         ninja_writer.build(
             output_path, '__ld',
-            inputs=' '.join(inputs),
+            inputs=inputs + deps,
             variables={
                 '__ld_flags': ldflags,
             },
         )
+        ninja_writer.build(
+            name, 'phony',
+            inputs=output_path
+        )
     elif type_name == 'static_library':
+        ldflags += ' -s'
         ldflags += ' -static'
         output_path = calc_temp_path(config_ctx, os.path.join('lib', name))
-        if output_path.endswith('.a'):
+        if not output_path.endswith('.a'):
             output_path += '.a'
         ninja_writer.build(
             output_path, '__ld',
-            inputs=' '.join(inputs),
+            inputs=inputs + deps,
             variables={
                 '__ld_flags': ldflags,
             },
+        )
+        ninja_writer.build(
+            name, 'phony',
+            inputs=output_path
         )
     else:
         raise StandardError('unknown target type: ' + type_name)
@@ -462,6 +732,21 @@ def write_ninja(config_ctx, ninja_path, ninja_writer):
         'target': write_target_ninja,
     }
     keys_contains_name = ['pool', 'rule', 'target', ]
+    plugins = config_ctx.get('plugin', [])
+    for plugin in plugins:
+        if not 'name' in plugin:
+            raise StandardError('plugin require name field!')
+        if not 'path' in plugin:
+            raise StandardError('plugin require path field!')
+        plugin_name = plugin['name']
+        plugin_path = plugin['path']
+        if plugin_path.endswith('.py'):
+            raise StandardError('plugin path is not a python file!')
+        plugin_path = get_rel_path(config_ctx, ninja_path, plugin_path)
+        if plugin_path is None:
+            raise StandardError('plugin path is not a exists!')
+        register_library_plugin(plugin_name, plugin_path)
+
     for key in keys:
         value = config_ctx[key]
         if isinstance(value, (list, tuple, set, )):
@@ -478,30 +763,49 @@ def write_ninja(config_ctx, ninja_path, ninja_writer):
             if key in key_map_fn:
                 for data in value:
                     key_map_fn[key](config_ctx, ninja_path, ninja_writer, data)
-
-        if key == 'default':
-            if isinstance(value, list):
-                items = []
-                for item in value:
-                    if isinstance(item, (str, unicode,)):
-                        items.append(item)
-                ninja_writer.default(items)
-            if isinstance(value, (str, unicode,)):
-                ninja_writer.default([value, ])
-        elif key == 'include' or key == 'subninja':
-            if not isinstance(value, (str, unicode, list, set, tuple, )):
-                continue
-            if isinstance(value, (str, unicode,)):
-                if key == 'include':
-                    write_include_ninja(config_ctx, ninja_path, ninja_writer, value)
-                if key == 'subninja':
-                    write_subninja_ninja(config_ctx, ninja_path, ninja_writer, value)
+        if key == 'default' or key == 'include' or key == 'subninja':
+            pass ## write at last
         else: # others is variable
             if key.startswith('__'):
                 continue
             if not isinstance(value, (str, unicode, int, bool, float, )):
                 continue
             ninja_writer.variable(key, value)
+
+    if 'include' in config_ctx:
+        key = 'include'
+        value = config_ctx['include']
+        if isinstance(value, (str, unicode, list, set, tuple, )):
+            if isinstance(value, (str, unicode,)):
+                write_include_ninja(config_ctx, ninja_path, ninja_writer, value)
+        if isinstance(value, (list, set, tuple, )):
+            for data in value:
+                if isinstance(data, (str, unicode,)):
+                    write_include_ninja(config_ctx, ninja_path, ninja_writer, data)
+
+    if 'subninja' in config_ctx:
+        key = 'subninja'
+        value = config_ctx['subninja']
+        if isinstance(value, (str, unicode, list, set, tuple, )):
+            if isinstance(value, (str, unicode,)):
+                write_subninja_ninja(config_ctx, ninja_path, ninja_writer, value)
+        if isinstance(value, (list, set, tuple, )):
+            for data in value:
+                if isinstance(data, (str, unicode,)):
+                    write_subninja_ninja(config_ctx, ninja_path, ninja_writer, data)
+    
+    if 'default' in config_ctx:
+        key = 'default'
+        value = config_ctx['default']
+        if isinstance(value, list):
+            items = []
+            for item in value:
+                if isinstance(item, (str, unicode,)):
+                    items.append(item)
+            ninja_writer.default(items)
+        if isinstance(value, (str, unicode,)):
+            ninja_writer.default([value, ])
+
 
 def generate_ninja(config_ctx, ninja_path, is_embed=True):
     if os.path.exists(ninja_path):
@@ -534,6 +838,9 @@ def config_context(options):
     with open(config_file, 'r') as conf_file:
         config = toml.loads(conf_file.read())
     config_ctx = ContextDict(config)
+    temp_path = config_ctx.pop('temp_path', None)
+    if temp_path is not None:
+        config_ctx.set('__temp_path', temp_path)
     config_ctx.update(options)
     return config_ctx
 
@@ -561,3 +868,8 @@ def clean(options, config_ctx=None):
         config_ctx = config_context(options)
     temp_path = config_ctx.getOrDefault('__temp_path', os.path.join(os.path.curdir, 'build'))
     os.remove(temp_path)
+
+
+import plugins
+for name, plugin in plugins.ALL_LIBRARY_PLUGINS.items():
+    register_library_plugin(name, plugin)

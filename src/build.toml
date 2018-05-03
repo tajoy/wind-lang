@@ -11,10 +11,10 @@ sources = [
 
 
 [[target]]
-name = 'winc'
+name = 'windc'
 type = 'executable'
 dependencies = [
-    'wincore',
+    'windcore',
 ]
 include_dirs = [
     '.',

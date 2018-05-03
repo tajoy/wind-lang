@@ -53,3 +53,7 @@
 
 # vscode settings
 /.vscode/
+
+# ninja temp files
+.ninja_deps
+.ninja_log
