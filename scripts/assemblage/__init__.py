@@ -30,7 +30,7 @@ __all__ = [
 ]
 
 def calc_temp_path(config_ctx, path):
-    temp_path = config_ctx.getOrDefault('temp_path', os.path.join(os.path.curdir, 'build'))
+    temp_path = config_ctx.getOrDefault('__temp_path', os.path.join(os.path.curdir, 'build'))
     cwd = os.path.realpath(os.path.curdir)
     temp_path = os.path.realpath(temp_path)
     path = os.path.realpath(path)
@@ -114,13 +114,13 @@ def get_rel_glob_path(config_ctx, ninja_path, glob_path):
     return paths
 
 def embed_ninja(config_ctx, ninja_path, ninja_writer):
-    cc_exec = config_ctx.get('cc_exec', 'cc')
-    cpp_exec = config_ctx.get('cpp_exec', 'cpp')
-    ld_exec = config_ctx.get('ld_exec', 'ld')
-    cc_path = config_ctx.get('cc_path', None)
-    cpp_path = config_ctx.get('cpp_path', None)
-    ld_path = config_ctx.get('ld_path', None)
-    cross_compile_root = config_ctx.get('cross_compile_root', None)
+    cc_exec = config_ctx.get('__cc_exec', 'cc')
+    cpp_exec = config_ctx.get('__cpp_exec', 'cpp')
+    ld_exec = config_ctx.get('__ld_exec', 'ld')
+    cc_path = config_ctx.get('__cc_path', None)
+    cpp_path = config_ctx.get('__cpp_path', None)
+    ld_path = config_ctx.get('__ld_path', None)
+    cross_compile_root = config_ctx.get('__cross_compile_root', None)
     bin_paths = os.environ['PATH'].split(os.path.pathsep)
     if cross_compile_root is not None:
         bin_paths = [
@@ -148,9 +148,9 @@ def embed_ninja(config_ctx, ninja_path, ninja_writer):
     if not exists_executable(ld_path):
         raise IOError('executable file not exists or can not execute:' + ld_exec)
 
-    cc_flags = config_ctx.get('cc_flags', '')
-    cpp_flags = config_ctx.get('cpp_flags', '')
-    ld_flags = config_ctx.get('ld_flags', '')
+    cc_flags = config_ctx.get('__cc_flags', '')
+    cpp_flags = config_ctx.get('__cpp_flags', '')
+    ld_flags = config_ctx.get('__ld_flags', '')
 
     ninja_writer.pool('__link_pool', 1)
 
@@ -173,7 +173,7 @@ def embed_ninja(config_ctx, ninja_path, ninja_writer):
     ninja_writer.rule(
         '__ld',
         '"%s" %s $__ld_flags -o $out $in' % (ld_path, ld_flags),
-        description='link($__link_type) $out',
+        description='link $out',
         pool='__link_pool'
     )
 
@@ -248,9 +248,11 @@ def write_include_ninja(config_ctx, ninja_path, ninja_writer, data):
         new_ctx = config_ctx.clone().merge({
             '___include_toml_path': sub_path
         })
-        sub_path = calc_temp_path(config_ctx, sub_path)
-        generate_ninja(new_ctx, sub_path, is_embed=False)
-        ninja_writer.include(sub_path)
+        write_ninja(new_ctx, ninja_path, ninja_writer)
+        # new_ninja_path = sub_path[] + '.ninja'
+        # sub_path = calc_temp_path(config_ctx, sub_path)
+        # generate_ninja(new_ctx, sub_path, is_embed=False)
+        # ninja_writer.include(sub_path)
 
 def write_subninja_ninja(config_ctx, ninja_path, ninja_writer, data):
     sub_path = None
@@ -270,13 +272,13 @@ def write_target_ninja(config_ctx, ninja_path, ninja_writer, data):
     target = dict(data)
     conditions = config_ctx.format(target.pop('conditions', []))
 
-    SYSTEM = config_ctx.get('system', platform.system()).lower()
+    SYSTEM = config_ctx.get('__system', platform.system()).lower()
     DEFAULT_OS = platform.system()
     if DEFAULT_OS == 'Darwin':
         DEFAULT_OS = 'apple'
-    OS = config_ctx.get('os', DEFAULT_OS).lower()
-    ARCH = config_ctx.get('arch', platform.machine()).lower()
-    ABI = config_ctx.get('abi', 'unknown').lower()
+    OS = config_ctx.get('__os', DEFAULT_OS).lower()
+    ARCH = config_ctx.get('__arch', platform.machine()).lower()
+    ABI = config_ctx.get('__abi', 'unknown').lower()
 
     for condition in conditions:
         cond = target.pop('condition')
@@ -495,11 +497,10 @@ def write_ninja(config_ctx, ninja_path, ninja_writer):
                 if key == 'subninja':
                     pass
         else: # others is variable
-            if isinstance(value, (dict, list, tuple, set, )):
+            if key.startswith('__'):
                 continue
-            if isinstance(value, (str, unicode, )):
-                if value.startswith('__'):
-                    continue
+            if not isinstance(value, (str, unicode, int, bool, float, )):
+                continue
             ninja_writer.variable(key, value)
 
 def generate_ninja(config_ctx, ninja_path, is_embed=True):
@@ -524,9 +525,9 @@ def build_ninja(config_ctx, ninja_path):
     sys.exit(child_ninja.wait())
 
 def config_context(options):
-    if 'change_dir' in options:
-        os.chdir(options['change_dir'])
-    config_file = options.get('config', os.path.join(os.path.curdir, 'build.toml'))
+    if '__change_dir' in options:
+        os.chdir(options['__change_dir'])
+    config_file = options.get('__config', os.path.join(os.path.curdir, 'build.toml'))
     if not os.path.isfile(config_file):
         raise IOError("config file not found: " + config_file)
     config = {}
@@ -539,10 +540,10 @@ def config_context(options):
 def generate(options, config_ctx=None):
     if config_ctx is None:
         config_ctx = config_context(options)
-    temp_path = config_ctx.getOrDefault('temp_path', os.path.join(os.path.curdir, 'build'))
+    temp_path = config_ctx.getOrDefault('__temp_path', os.path.join(os.path.curdir, 'build'))
     ensure_dir(temp_path)
     ninja_path = os.path.join(temp_path, 'build.ninja')
-    is_force = config_ctx.getOrDefault('force_generate', False)
+    is_force = config_ctx.getOrDefault('__force_generate', False)
     if is_force:
          generate_ninja(config_ctx, ninja_path)
     else:
@@ -558,5 +559,5 @@ def build(options, config_ctx=None):
 def clean(options, config_ctx=None):
     if config_ctx is None:
         config_ctx = config_context(options)
-    temp_path = config_ctx.getOrDefault('temp_path', os.path.join(os.path.curdir, 'build'))
+    temp_path = config_ctx.getOrDefault('__temp_path', os.path.join(os.path.curdir, 'build'))
     os.remove(temp_path)
