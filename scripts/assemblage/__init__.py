@@ -491,9 +491,9 @@ def write_ninja(config_ctx, ninja_path, ninja_writer):
                 continue
             if isinstance(value, (str, unicode,)):
                 if key == 'include':
-                    pass
+                    write_include_ninja(config_ctx, ninja_path, ninja_writer, value)
                 if key == 'subninja':
-                    pass
+                    write_subninja_ninja(config_ctx, ninja_path, ninja_writer, value)
         else: # others is variable
             if isinstance(value, (dict, list, tuple, set, )):
                 continue
