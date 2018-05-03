@@ -13,60 +13,80 @@ class GenerateCommand(Command):
 
     def build_parser(self, parser):
         parser.add_argument(
-            '--force-generate',
-            action='store_true',
-            help='force generate ninja build file, delete if exists',
-            dest='force_generate'
+            '--config', '-c',
+            type=str,
+            help='specify config file',
+            dest='__config'
         )
 
         parser.add_argument(
-            '--temp-path',
+            '--change-dir', '-C',
+            type=str,
+            help='change current directory to',
+            dest='__change_dir'
+        )
+
+        parser.add_argument(
+            '--force-generate', '-f',
+            action='store_true',
+            help='force generate ninja build file, delete if exists',
+            dest='__force_generate'
+        )
+
+        parser.add_argument(
+            '--temp-path', '-T',
             type=str,
             help='temprory path for compile and build files, include object files, ninja files, output files.',
-            dest='temp_path'
+            dest='__temp_path'
         )
 
         parser.add_argument(
             '--cc-exec',
             type=str,
             help='C compiler executable file name, will find in $PATH or --cross-compile-root',
-            dest='cc_exec'
+            dest='__cc_exec'
         )
+
         parser.add_argument(
             '--cpp-exec',
             type=str,
             help='C++ compiler executable file name, will find in $PATH or --cross-compile-root',
-            dest='cpp_exec'
+            dest='__cpp_exec'
         )
+
         parser.add_argument(
             '--ld-exec',
             type=str,
             help='linker executable file name, will find in $PATH or --cross-compile-root',
-            dest='ld_exec'
+            dest='__ld_exec'
         )
+
         parser.add_argument(
             '--cc-path',
             type=str,
             help='C compiler executable full path',
-            dest='cc_path'
+            dest='__cc_path'
         )
+
         parser.add_argument(
             '--cpp-path',
             type=str,
             help='C++ compiler executable full path',
-            dest='cpp_path'
+            dest='__cpp_path'
         )
+
         parser.add_argument(
             '--ld-path',
             type=str,
             help='linker executable full path',
-            dest='ld_path'
+            dest='__ld_path'
         )
+
         parser.add_argument(
-            '--cross-compile-root',
+            '--cross-compile-root', '-X',
             type=str,
             help='use for cross compile, root of cross compile toolchain',
-            dest='cross_compile_root'
+            dest='__cross_compile_root'
         )
         
         parser.add_argument(
@@ -74,7 +94,7 @@ class GenerateCommand(Command):
             type=str,
             choices=['darwin', 'linux', 'unix', 'windows'],
             help='use for cross compile, compile target system',
-            dest='system'
+            dest='__system'
         )
 
         parser.add_argument(
@@ -82,7 +102,7 @@ class GenerateCommand(Command):
             type=str,
             choices=['apple', 'linux', 'windows', 'ios', 'android'],
             help='use for cross compile, compile target os',
-            dest='os'
+            dest='__os'
         )
 
         parser.add_argument(
@@ -95,7 +115,7 @@ class GenerateCommand(Command):
                 'powerpc', 'powerpc64', 'powerpc64le',
             ],
             help='use for cross compile, compile target arch',
-            dest='arch'
+            dest='__arch'
         )
 
         parser.add_argument(
@@ -113,26 +133,28 @@ class GenerateCommand(Command):
                 'redox',
             ],
             help='use for cross compile, compile target (e)abi',
-            dest='abi'
+            dest='__abi'
         )
 
         parser.add_argument(
             '--cc-flags',
             type=str,
             help='C compile flags',
-            dest='cc_flags'
+            dest='__cc_flags'
         )
+        
         parser.add_argument(
             '--cpp-flags',
             type=str,
             help='C++ compile flags',
-            dest='cpp_flags'
+            dest='__cpp_flags'
         )
+
         parser.add_argument(
             '--ld-flags',
             type=str,
             help='linker flags',
-            dest='ld_flags'
+            dest='__ld_flags'
         )
 
     def execute(self, args):

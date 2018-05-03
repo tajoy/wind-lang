@@ -46,11 +46,11 @@ class ContextDict(dict):
         else:
             return item
 
-    def __dict__(self):
+    def to_dict(self):
         d = {}
         for key in self._context_dict.keys():
             d[key] = self[key]
-        return self._context_dict
+        return d
         
     def __cmp__(self, other):
         if isinstance(other, ContextDict):
@@ -81,7 +81,7 @@ class ContextDict(dict):
         return self._context_dict.__hash__()
         
     def __iter__(self):
-        raise NotImplementedError
+        return iter(self.to_dict())
 
     def __len__(self):
         return self._context_dict.__len__()
@@ -275,6 +275,7 @@ def main():
     print ctx['test2']
     print ctx['test3']
     print ctx['test4']
+    print dict(ctx)
 
 if __name__ == '__main__':
     main()
