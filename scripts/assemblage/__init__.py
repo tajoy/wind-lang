@@ -77,7 +77,9 @@ def find_exec_path(config_ctx, exec_name):
         exec_path = os.path.join(path, 'xcrun')
         if exists_executable(exec_path):
             exists_xcrun = True
-    if exists_xcrun and (OS == 'apple' or OS == 'ios'):
+            if exec_name == 'xcrun':
+                return exec_path
+    if exists_xcrun  and (OS == 'apple' or OS == 'ios'):
         return subprocess.check_output(['xcrun', '-f', exec_name]).strip()
     else:
         if cross_compile_root is not None:
@@ -312,12 +314,25 @@ def detect_ld_magic_flags(config_ctx, ninja_path, cc_path):
 def embed_ninja(config_ctx, ninja_path, ninja_writer):
     SYSTEM, OS, ARCH, ABI = get_platform_info(config_ctx)
 
+    DEFAULT_CC_EXEC = 'gcc'
+    DEFAULT_CPP_EXEC = 'g++'
+    DEFAULT_LD_EXEC = 'ld'
+    DEFAULT_AR_EXEC = 'ar'
+    DEFAULT_AS_EXEC = 'as'
 
-    cc_exec = config_ctx.get('__cc_exec', 'gcc')
-    cpp_exec = config_ctx.get('__cpp_exec', 'g++')
-    ld_exec = config_ctx.get('__ld_exec', 'ld')
-    ar_exec = config_ctx.get('__ar_exec', 'ar')
-    as_exec = config_ctx.get('__as_exec', 'as')
+
+    DEFAULT_CC_EXEC_2 = 'cc'
+    DEFAULT_CPP_EXEC_2 = 'cpp'
+
+    # if OS == 'apple' or OS == 'ios':
+    #     DEFAULT_CC_EXEC = 'clang'
+    #     DEFAULT_CPP_EXEC = 'clang'
+
+    cc_exec = config_ctx.get('__cc_exec', DEFAULT_CC_EXEC)
+    cpp_exec = config_ctx.get('__cpp_exec', DEFAULT_CPP_EXEC)
+    ld_exec = config_ctx.get('__ld_exec', DEFAULT_LD_EXEC)
+    ar_exec = config_ctx.get('__ar_exec', DEFAULT_AR_EXEC)
+    as_exec = config_ctx.get('__as_exec', DEFAULT_AS_EXEC)
     cc_path = config_ctx.get('__cc_path', None)
     cpp_path = config_ctx.get('__cpp_path', None)
     ld_path = config_ctx.get('__ld_path', None)
@@ -326,11 +341,11 @@ def embed_ninja(config_ctx, ninja_path, ninja_writer):
     if cc_path is None:
         cc_path = find_exec_path(config_ctx, cc_exec)
         if cc_exec == 'gcc' and cc_path is None:
-            cc_path = find_exec_path(config_ctx, 'cc')
+            cc_path = find_exec_path(config_ctx, DEFAULT_CC_EXEC_2)
     if cpp_path is None:
         cpp_path = find_exec_path(config_ctx, cpp_exec)
         if cc_exec == 'g++' and cc_path is None:
-            cc_path = find_exec_path(config_ctx, 'cpp')
+            cc_path = find_exec_path(config_ctx, DEFAULT_CPP_EXEC_2)
     if ld_path is None:
         ld_path = find_exec_path(config_ctx, ld_exec)
     if ar_path is None:
@@ -355,13 +370,24 @@ def embed_ninja(config_ctx, ninja_path, ninja_writer):
     ld_flags = config_ctx.get('__ld_flags', '')
     ar_flags = config_ctx.get('__ar_flags', '')
 
-    cc_flags += ' ' + detect_c_magic_flags(config_ctx, ninja_path, cc_path)
-    cpp_flags += ' ' + detect_cpp_magic_flags(config_ctx, ninja_path, cpp_path)
+
+    if (OS == 'apple' or OS == 'ios'):
+        cc_flags += ' -x c -c'
+        cpp_flags += ' -x c++ -c'
+    else:
+        cc_flags += ' ' + detect_c_magic_flags(config_ctx, ninja_path, cc_path)
+        cpp_flags += ' ' + detect_cpp_magic_flags(config_ctx, ninja_path, cpp_path)
     as_c_flags += ' ' + detect_as_c_magic_flags(config_ctx, ninja_path, cc_path)
     as_cpp_flags += ' ' + detect_as_cpp_magic_flags(config_ctx, ninja_path, cpp_path)
     obj_flags += ' ' + detect_obj_magic_flags(config_ctx, ninja_path, cc_path)
     ld_flags += ' ' + detect_ld_magic_flags(config_ctx, ninja_path, cc_path)
     ar_flags += 'rcs'
+
+    # if (OS == 'apple' or OS == 'ios') and find_exec_path(config_ctx, 'xcrun') is not None:
+    #     sdk_root = subprocess.check_output(['xcrun', '--show-sdk-path']).strip()
+    #     cc_flags += ' -I "%s"' % (os.path.join(sdk_root, 'usr', 'include'))
+    #     cpp_flags += ' -I "%s"' % (os.path.join(sdk_root, 'usr', 'include'))
+    #     ld_flags += ' -L "%s"' % (os.path.join(sdk_root, 'usr', 'lib'))
 
     if OS == 'apple' or OS == 'ios':
         config_ctx.set('__executable_flags', ' -execute')
@@ -596,12 +622,12 @@ def find_dependencies(config_ctx, ninja_path, dependencies):
     cppflags = ''
     ldflags = ''
     dependency_target = None
-    re_plugin = re.compile(r'^@plugin:([^/]*)//(.*)')
+    re_plugin = re.compile(r'^@plugin:([^/]*)(//(.*))?')
     for dependency in dependencies:
         match_obj = re_plugin.match(dependency)
         if match_obj:
             plugin_name = match_obj.group(1)
-            plugin_param = match_obj.group(2)
+            plugin_param = match_obj.group(3)
             plugin_deps, plugin_implicit_files, plugin_cflags, plugin_cppflags, plugin_ldflags, error = find_dependency_by_plugin(config_ctx, ninja_path, plugin_name, plugin_param)
             if plugin_deps is None or plugin_ldflags is None:
                 raise StandardError(
@@ -611,9 +637,9 @@ def find_dependencies(config_ctx, ninja_path, dependencies):
                     )
             deps += as_list(plugin_deps)
             implicit_files += as_list(plugin_implicit_files)
-            cflags += plugin_cflags
-            cppflags += plugin_cppflags
-            ldflags += plugin_ldflags
+            cflags += ' ' + '"%s"' % ('" "'.join(shlex.split(plugin_cflags)))
+            cppflags += ' ' + '"%s"' % ('" "'.join(shlex.split(plugin_cppflags)))
+            ldflags += ' ' + '"%s"' % ('" "'.join(shlex.split(plugin_ldflags)))
             continue
         
         dep_paths = get_rel_glob_path(config_ctx, ninja_path, dependency)
@@ -627,7 +653,7 @@ def find_dependencies(config_ctx, ninja_path, dependencies):
                 dep_include_dir = os.path.join(dep_dir, '..', 'include')
                 if os.path.isdir(dep_include_dir):
                     cflags += ' -I"%s"' % (dep_include_dir)
-                    ppflags += ' -I"%s"' % (dep_include_dir)
+                    cppflags += ' -I"%s"' % (dep_include_dir)
                 if dep_path.endswith('.so') or dep_path.endswith('.dll'):
                     dep_dir = os.path.dirname(dep_path)
                     ldflags += ' -L"%s"' % (dep_dir)

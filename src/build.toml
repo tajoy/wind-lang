@@ -1,6 +1,9 @@
 [[target]]
 name = 'windcore'
-type = 'dynamic_library'
+type = 'static_library'
+dependencies = [
+    '@plugin:llvm-config',
+]
 include_dirs = [
     '.',
 ]
