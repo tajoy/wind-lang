@@ -324,9 +324,9 @@ def embed_ninja(config_ctx, ninja_path, ninja_writer):
     DEFAULT_CC_EXEC_2 = 'cc'
     DEFAULT_CPP_EXEC_2 = 'cpp'
 
-    # if OS == 'apple' or OS == 'ios':
-    #     DEFAULT_CC_EXEC = 'clang'
-    #     DEFAULT_CPP_EXEC = 'clang'
+    if OS == 'apple' or OS == 'ios':
+        DEFAULT_CC_EXEC = 'clang'
+        DEFAULT_CPP_EXEC = 'clang'
 
     cc_exec = config_ctx.get('__cc_exec', DEFAULT_CC_EXEC)
     cpp_exec = config_ctx.get('__cpp_exec', DEFAULT_CPP_EXEC)
@@ -371,43 +371,47 @@ def embed_ninja(config_ctx, ninja_path, ninja_writer):
     ar_flags = config_ctx.get('__ar_flags', '')
 
 
-    if (OS == 'apple' or OS == 'ios'):
-        cc_flags += ' -x c -c'
-        cpp_flags += ' -x c++ -c'
-    else:
-        cc_flags += ' ' + detect_c_magic_flags(config_ctx, ninja_path, cc_path)
-        cpp_flags += ' ' + detect_cpp_magic_flags(config_ctx, ninja_path, cpp_path)
+    cc_flags += ' -x c -c'
+    cpp_flags += ' -x c++ -c'
+    # cc_flags += ' ' + detect_c_magic_flags(config_ctx, ninja_path, cc_path)
+    # cpp_flags += ' ' + detect_cpp_magic_flags(config_ctx, ninja_path, cpp_path)
     as_c_flags += ' ' + detect_as_c_magic_flags(config_ctx, ninja_path, cc_path)
     as_cpp_flags += ' ' + detect_as_cpp_magic_flags(config_ctx, ninja_path, cpp_path)
     obj_flags += ' ' + detect_obj_magic_flags(config_ctx, ninja_path, cc_path)
     ld_flags += ' ' + detect_ld_magic_flags(config_ctx, ninja_path, cc_path)
-    ar_flags += 'rcs'
+    ar_flags += ' rcs'
 
-    # if (OS == 'apple' or OS == 'ios') and find_exec_path(config_ctx, 'xcrun') is not None:
-    #     sdk_root = subprocess.check_output(['xcrun', '--show-sdk-path']).strip()
-    #     cc_flags += ' -I "%s"' % (os.path.join(sdk_root, 'usr', 'include'))
-    #     cpp_flags += ' -I "%s"' % (os.path.join(sdk_root, 'usr', 'include'))
-    #     ld_flags += ' -L "%s"' % (os.path.join(sdk_root, 'usr', 'lib'))
+    sdk_root = None
+    if find_exec_path(config_ctx, 'xcrun') is not None:
+        sdk_root = subprocess.check_output(['xcrun', '--show-sdk-path']).strip()
+
+    if (OS == 'apple' or OS == 'ios') and sdk_root is not None:
+        cc_flags += ' -isysroot "%s"' % (sdk_root)
+        cc_flags += ' -I "%s"' % (os.path.join(sdk_root, 'usr', 'include'))
+        cpp_flags += ' -I "%s"' % (os.path.join(sdk_root, 'usr', 'include'))
+        ld_flags += ' -L "%s"' % (os.path.join(sdk_root, 'usr', 'lib'))
 
     if OS == 'apple' or OS == 'ios':
-        config_ctx.set('__executable_flags', ' -execute')
+        config_ctx.set('__executable_flags', ' -execute -L"%s/usr/lib" -lcrt1.10.6.o' % (sdk_root))
         config_ctx.set('__dynamic_library_flags', ' -dylib -undefined dynamic_lookup')
     else:
         config_ctx.set('__executable_flags', '')
-        config_ctx.set('__dynamic_library_flags', ' -shared -undefined dynamic_lookup')
+        config_ctx.set('__dynamic_library_flags', ' -shared')
 
     ninja_writer.pool('__link_pool', 1)
 
     ninja_writer.rule(
         '__cc',
-        '"%s" %s $__cc_flags $in -o $out' % (cc_path, cc_flags),
-        description='compile(c) $out'
+        '"%s" %s -MMD -MF $out.d $__cc_flags $in -o $out' % (cc_path, cc_flags),
+        description='compile(c) $out',
+        depfile='$out.d'
     )
 
     ninja_writer.rule(
         '__cpp',
-        '"%s" %s $__cpp_flags $in -o $out' % (cpp_path, cpp_flags),
-        description='compile(cpp) $out'
+        '"%s" %s -MMD -MF $out.d $__cpp_flags $in -o $out' % (cpp_path, cpp_flags),
+        description='compile(cpp) $out',
+        depfile='$out.d'
     )
 
     ninja_writer.rule(
@@ -665,7 +669,9 @@ def find_dependencies(config_ctx, ninja_path, dependencies):
                     if dep_basename.endswith('.dll'):
                         dep_basename = dep_basename[:-4]
                     ldflags += ' -l"%s"' % (os.path.basename(dep_basename))
-                    ldflags += ' -rpath "%s"' % (dep_dir)
+                    # ldflags += ' -rpath "%s"' % (dep_dir)
+                    # if OS == 'apple' or OS == 'ios':
+                    #     ldflags += ' -mmacosx-version-min=10.5'
                 if dep_path.endswith('.a'):
                     ldflags += ' -L"%s"' % (os.path.dirname(dep_path))
                     dep_basename = os.path.basename(dep_path)
@@ -708,7 +714,9 @@ def find_dependencies(config_ctx, ninja_path, dependencies):
             if dep_basename.endswith('.dll'):
                 dep_basename = dep_basename[:-4]
             ldflags += ' -l"%s"' % (os.path.basename(dep_basename))
-            ldflags += ' -rpath "%s"' % (os.path.dirname(dependency_path))
+            # ldflags += ' -rpath "%s"' % (os.path.dirname(dependency_path))
+            # if OS == 'apple' or OS == 'ios':
+            #     ldflags += ' -mmacosx-version-min=10.5'
         elif dependency_type == 'static_library':
             implicit_files += [dependency_path]
             ldflags += ' -L"%s"' % (os.path.dirname(dependency_path))

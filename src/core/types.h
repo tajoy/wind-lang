@@ -7,3 +7,4 @@
 
 
 #endif // end of __CORE_TYPES__
+
