@@ -1,6 +1,6 @@
 [[target]]
 name = 'windcore'
-type = 'static_library'
+type = 'dynamic_library'
 include_dirs = [
     '.',
 ]

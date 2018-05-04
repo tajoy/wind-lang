@@ -13,7 +13,8 @@ def find(parms):
     env = dict(os.environ)
     binpath = env.get('WX_CONFIG', 'wx-config')
     deps = []
+    implicit_files = []
     ldflags = subprocess.check_output([binpath, '--libs', parms])
     flags = subprocess.check_output([binpath, '--cxxflags', parms])
-    return deps, flags, ldflags
+    return deps, implicit_files, flags, ldflags
 

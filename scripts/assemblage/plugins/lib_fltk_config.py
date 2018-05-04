@@ -9,6 +9,7 @@ def find(parms):
     env = dict(os.environ)
     binpath = env.get('FLTK_CONFIG', 'fltk-config')
     deps = []
+    implicit_files = []
     ldflags = subprocess.check_output([binpath, '--ldflags', parms])
     flags = subprocess.check_output([binpath, '--cxxflags', parms])
-    return deps, flags, ldflags
+    return deps, implicit_files, flags, ldflags

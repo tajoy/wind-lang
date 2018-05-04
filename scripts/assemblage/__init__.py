@@ -58,25 +58,44 @@ def exists_executable(path):
         return False
     return os.path.isfile(path)# and os.access(path, os.X_OK)
 
+def get_platform_info(config_ctx):
+    SYSTEM = config_ctx.get('__system', platform.system()).lower()
+    DEFAULT_OS = platform.system().lower()
+    if DEFAULT_OS == 'darwin':
+        DEFAULT_OS = 'apple'
+    OS = config_ctx.get('__os', DEFAULT_OS).lower()
+    ARCH = config_ctx.get('__arch', platform.machine()).lower()
+    ABI = config_ctx.get('__abi', 'unknown').lower()
+    return SYSTEM, OS, ARCH, ABI
+
 def find_exec_path(config_ctx, exec_name):
     cross_compile_root = config_ctx.get('__cross_compile_root', None)
+    SYSTEM, OS, ARCH, ABI = get_platform_info(config_ctx)
     bin_paths = os.environ['PATH'].split(os.path.pathsep)
-    if cross_compile_root is not None:
-        bin_paths = [
-            cross_compile_root,
-            os.path.join(cross_compile_root, 'bin'),
-            os.path.join(cross_compile_root, 'sbin'),
-            os.path.join(cross_compile_root, 'local', 'bin'),
-            os.path.join(cross_compile_root, 'local', 'sbin'),
-            os.path.join(cross_compile_root, 'usr', 'bin'),
-            os.path.join(cross_compile_root, 'usr', 'sbin'),
-            os.path.join(cross_compile_root, 'usr', 'local', 'bin'),
-            os.path.join(cross_compile_root, 'usr', 'local', 'sbin'),
-        ]
+    exists_xcrun = False
     for path in bin_paths:
-        exec_path = os.path.join(path, exec_name)
+        exec_path = os.path.join(path, 'xcrun')
         if exists_executable(exec_path):
-            return exec_path
+            exists_xcrun = True
+    if exists_xcrun and (OS == 'apple' or OS == 'ios'):
+        return subprocess.check_output(['xcrun', '-f', exec_name]).strip()
+    else:
+        if cross_compile_root is not None:
+            bin_paths = [
+                cross_compile_root,
+                os.path.join(cross_compile_root, 'bin'),
+                os.path.join(cross_compile_root, 'sbin'),
+                os.path.join(cross_compile_root, 'local', 'bin'),
+                os.path.join(cross_compile_root, 'local', 'sbin'),
+                os.path.join(cross_compile_root, 'usr', 'bin'),
+                os.path.join(cross_compile_root, 'usr', 'sbin'),
+                os.path.join(cross_compile_root, 'usr', 'local', 'bin'),
+                os.path.join(cross_compile_root, 'usr', 'local', 'sbin'),
+            ]
+        for path in bin_paths:
+            exec_path = os.path.join(path, exec_name)
+            if exists_executable(exec_path):
+                return exec_path
     return None
 
 
@@ -226,10 +245,21 @@ def detect_flags(config_ctx, ninja_path, bin_path, in_suffix, out_suffix, flags)
         ['-o', out1_path],
         ['-o', out2_path],
     ])
-    return detect_sequence_in_lines_args(lines_args, [
+    all_args = detect_sequence_in_lines_args(lines_args, [
         ['-o', out1_path],
         ['-o', out2_path],
     ])
+    FILTER_FLAGS = [
+        '-main-file-name',
+        '-resource-dir',
+        '-dynamic',
+        '-static',
+    ]
+    for args in list(all_args):
+        for flag in FILTER_FLAGS:
+            if flag in args:
+                args.remove(flag)
+    return all_args
 
 def detect_c_magic_flags(config_ctx, ninja_path, cc_path):
     all_args = detect_flags(config_ctx, ninja_path, cc_path, '.c', '.o', ['-c'])
@@ -279,15 +309,19 @@ def detect_ld_magic_flags(config_ctx, ninja_path, cc_path):
             return '"%s"' % ('" "'.join(args[1:]))
     return '"%s"' % ('" "'.join(all_args[-1]))
 
-
 def embed_ninja(config_ctx, ninja_path, ninja_writer):
+    SYSTEM, OS, ARCH, ABI = get_platform_info(config_ctx)
+
+
     cc_exec = config_ctx.get('__cc_exec', 'gcc')
     cpp_exec = config_ctx.get('__cpp_exec', 'g++')
     ld_exec = config_ctx.get('__ld_exec', 'ld')
+    ar_exec = config_ctx.get('__ar_exec', 'ar')
     as_exec = config_ctx.get('__as_exec', 'as')
     cc_path = config_ctx.get('__cc_path', None)
     cpp_path = config_ctx.get('__cpp_path', None)
     ld_path = config_ctx.get('__ld_path', None)
+    ar_path = config_ctx.get('__ar_path', None)
     as_path = config_ctx.get('__as_path', None)
     if cc_path is None:
         cc_path = find_exec_path(config_ctx, cc_exec)
@@ -299,13 +333,15 @@ def embed_ninja(config_ctx, ninja_path, ninja_writer):
             cc_path = find_exec_path(config_ctx, 'cpp')
     if ld_path is None:
         ld_path = find_exec_path(config_ctx, ld_exec)
+    if ar_path is None:
+        ar_path = find_exec_path(config_ctx, ar_exec)
     if as_path is None:
         as_path = find_exec_path(config_ctx, as_exec)
 
     if not exists_executable(cc_path):
-        raise IOError('executable file not exists or can not execute:' + cc_exec)
+        raise IOError('executable file not exists or can not execute: ' + cc_exec)
     if not exists_executable(cpp_path):
-        raise IOError('executable file not exists or can not execute:' + cpp_exec)
+        raise IOError('executable file not exists or can not execute: ' + cpp_exec)
     if not exists_executable(ld_path):
         as_path = cc_path
     if not exists_executable(as_path):
@@ -317,6 +353,7 @@ def embed_ninja(config_ctx, ninja_path, ninja_writer):
     as_cpp_flags = cpp_flags + ' ' + config_ctx.get('__as_cpp_flags', '')
     obj_flags = config_ctx.get('__obj_flags', '')
     ld_flags = config_ctx.get('__ld_flags', '')
+    ar_flags = config_ctx.get('__ar_flags', '')
 
     cc_flags += ' ' + detect_c_magic_flags(config_ctx, ninja_path, cc_path)
     cpp_flags += ' ' + detect_cpp_magic_flags(config_ctx, ninja_path, cpp_path)
@@ -324,6 +361,14 @@ def embed_ninja(config_ctx, ninja_path, ninja_writer):
     as_cpp_flags += ' ' + detect_as_cpp_magic_flags(config_ctx, ninja_path, cpp_path)
     obj_flags += ' ' + detect_obj_magic_flags(config_ctx, ninja_path, cc_path)
     ld_flags += ' ' + detect_ld_magic_flags(config_ctx, ninja_path, cc_path)
+    ar_flags += 'rcs'
+
+    if OS == 'apple' or OS == 'ios':
+        config_ctx.set('__executable_flags', ' -execute')
+        config_ctx.set('__dynamic_library_flags', ' -dylib -undefined dynamic_lookup')
+    else:
+        config_ctx.set('__executable_flags', '')
+        config_ctx.set('__dynamic_library_flags', ' -shared -undefined dynamic_lookup')
 
     ninja_writer.pool('__link_pool', 1)
 
@@ -343,6 +388,13 @@ def embed_ninja(config_ctx, ninja_path, ninja_writer):
         '__obj',
         '"%s" %s $__obj_flags $in -o $out' % (cc_path, obj_flags),
         description='assemble $out'
+    )
+
+    ninja_writer.rule(
+        '__ar',
+        '"%s" %s $__ar_flags $out $in' % (ar_path, ar_flags),
+        description='ar $out',
+        pool='__link_pool'
     )
 
     ninja_writer.rule(
@@ -427,7 +479,7 @@ def write_include_ninja(config_ctx, ninja_path, ninja_writer, data):
         if not data.endswith('.toml') and not data.endswith('.ninja'):
             sub_path = data + '.toml'
     if sub_path is None or not os.path.isfile(sub_path):
-        raise IOError('include file not found:' + data)
+        raise IOError('include file not found: ' + data)
 
     if sub_path.endswith('.ninja'):
         ninja_writer.include(sub_path)
@@ -453,7 +505,7 @@ def write_subninja_ninja(config_ctx, ninja_path, ninja_writer, data):
         if not data.endswith('.ninja'):
             sub_path = data + '.ninja'
     if sub_path is None or not os.path.isfile(sub_path):
-        raise IOError('subninja file not found:' + data)
+        raise IOError('subninja file not found: ' + data)
     ninja_writer.subninja(sub_path)
 
 def register_library_plugin(plugin_name, plugin_or_path):
@@ -489,32 +541,56 @@ def register_library_plugin(plugin_name, plugin_or_path):
 def find_dependency_by_plugin(config_ctx, ninja_path, plugin_name, plugin_param):
     global REGISTERED_LIBRARY_PLUGINS
     plugin_deps = None
+    plugin_implicit_files = []
     plugin_flags = None
     plugin_ldflags = None
     error = None
 
     if not plugin_name in REGISTERED_LIBRARY_PLUGINS:
         error = StandardError('plugin "%s" not found' % (plugin_name))
-        return plugin_deps, plugin_flags, plugin_ldflags, error
+        return plugin_deps, plugin_implicit_files, plugin_flags, plugin_ldflags, error
 
     fn = REGISTERED_LIBRARY_PLUGINS[plugin_name]
     try:
-        plugin_deps, plugin_flags, plugin_ldflags = fn(plugin_param)
+        plugin_deps, plugin_implicit_files, plugin_flags, plugin_ldflags = fn(plugin_param)
     except Exception as e:
         error = e
-    return plugin_deps, plugin_flags, plugin_ldflags, error
+    return plugin_deps, plugin_implicit_files, plugin_flags, plugin_ldflags, error
     
+
+def calc_output_path(config_ctx, name, type_name):
+    SYSTEM, OS, ARCH, ABI = get_platform_info(config_ctx)
+    output_path = None
+    if type_name == 'executable':
+        output_path = calc_temp_path(config_ctx, os.path.join('bin', name))
+        if OS == 'windows' and not output_path.endswith('.exe'):
+            output_path += '.exe'
+    elif type_name == 'dynamic_library':
+        output_path = calc_temp_path(config_ctx, os.path.join('lib', name))
+        if OS == 'windows':
+            if not output_path.endswith('.dll'):
+                output_path += '.dll'
+        else:
+            if not output_path.endswith('.so'):
+                output_path += '.so'
+            if not os.path.basename(output_path).startswith('lib'):
+                output_path = os.path.join(os.path.dirname(output_path), 'lib' + os.path.basename(output_path))
+    elif type_name == 'static_library':
+        output_path = calc_temp_path(config_ctx, os.path.join('lib', name))
+        if not output_path.endswith('.a'):
+            output_path += '.a'
+        if OS != 'windows' and not os.path.basename(output_path).startswith('lib'):
+            output_path = os.path.join(os.path.dirname(output_path), 'lib' + os.path.basename(output_path))
+    else:
+        raise StandardError('unknown target type: ' + type_name)
+    return output_path
+
 def find_dependencies(config_ctx, ninja_path, dependencies):
-    SYSTEM = config_ctx.get('__system', platform.system()).lower()
-    DEFAULT_OS = platform.system()
-    if DEFAULT_OS == 'Darwin':
-        DEFAULT_OS = 'apple'
-    OS = config_ctx.get('__os', DEFAULT_OS).lower()
-    ARCH = config_ctx.get('__arch', platform.machine()).lower()
-    ABI = config_ctx.get('__abi', 'unknown').lower()
+    SYSTEM, OS, ARCH, ABI = get_platform_info(config_ctx)
 
     target_map = config_ctx['__target_map']
     deps = []
+    implicit_files = []
     flags = ''
     ldflags = ''
     dependency_target = None
@@ -524,7 +600,7 @@ def find_dependencies(config_ctx, ninja_path, dependencies):
         if match_obj:
             plugin_name = match_obj.group(1)
             plugin_param = match_obj.group(2)
-            plugin_deps, plugin_flags, plugin_ldflags, error = find_dependency_by_plugin(config_ctx, ninja_path, plugin_name, plugin_param)
+            plugin_deps, plugin_implicit_files, plugin_flags, plugin_ldflags, error = find_dependency_by_plugin(config_ctx, ninja_path, plugin_name, plugin_param)
             if plugin_deps is None or plugin_ldflags is None:
                 raise StandardError(
                     'plugin "%s" can not find out dependency by "%s": \n%s' % (
@@ -532,6 +608,7 @@ def find_dependencies(config_ctx, ninja_path, dependencies):
                         )
                     )
             deps += as_list(plugin_deps)
+            implicit_files += as_list(plugin_implicit_files)
             flags += plugin_flags
             ldflags += plugin_ldflags
             continue
@@ -557,7 +634,7 @@ def find_dependencies(config_ctx, ninja_path, dependencies):
                     if dep_basename.endswith('.dll'):
                         dep_basename = dep_basename[:-4]
                     ldflags += ' -l"%s"' % (os.path.basename(dep_basename))
-                    ldflags += ' -rpath"%s"' % (dep_dir)
+                    ldflags += ' -rpath "%s"' % (dep_dir)
                 if dep_path.endswith('.a'):
                     ldflags += ' -L"%s"' % (os.path.dirname(dep_path))
                     dep_basename = os.path.basename(dep_path)
@@ -580,6 +657,7 @@ def find_dependencies(config_ctx, ninja_path, dependencies):
             raise StandardError('can not dependency on a executable: ' + dependency)
         dependency_name = dependency_target['name']
         dependency_type = dependency_target['type']
+        dependency_path = calc_output_path(config_ctx, dependency_name, dependency_type)
         if 'include_dirs' in dependency_target:
             dep_include_dirs = dependency_target['include_dirs']
             for include_dir in dep_include_dirs:
@@ -588,14 +666,7 @@ def find_dependencies(config_ctx, ninja_path, dependencies):
         if dependency_type == 'executable':
             raise StandardError('can not dependency on a executable: ' + dependency)
         elif dependency_type == 'dynamic_library':
-            deps += [dependency_name]
-            dependency_path = calc_temp_path(config_ctx, os.path.join('lib', dependency_name))
-            if OS == 'windows':
-                if not dependency_path.endswith('.dll'):
-                    dependency_path += '.dll'
-            else:
-                if not dependency_path.endswith('.so'):
-                    dependency_path += '.so'
+            implicit_files += [dependency_path]
             ldflags += ' -L"%s"' % (os.path.dirname(dependency_path))
             dep_basename = os.path.basename(dependency_path)
             if dep_basename.startswith('lib'):
@@ -605,21 +676,20 @@ def find_dependencies(config_ctx, ninja_path, dependencies):
             if dep_basename.endswith('.dll'):
                 dep_basename = dep_basename[:-4]
             ldflags += ' -l"%s"' % (os.path.basename(dep_basename))
-            ldflags += ' -rpath"%s"' % (os.path.dirname(dependency_path))
+            ldflags += ' -rpath "%s"' % (os.path.dirname(dependency_path))
         elif dependency_type == 'static_library':
-            deps += [dependency_name]
-            dependency_path = calc_temp_path(config_ctx, os.path.join('lib', dependency_name))
-            if not dependency_path.endswith('.a'):
-                dependency_path += '.a'
+            implicit_files += [dependency_path]
             ldflags += ' -L"%s"' % (os.path.dirname(dependency_path))
             dep_basename = os.path.basename(dependency_path)
             if dep_basename.startswith('lib'):
                 dep_basename = dep_basename[3:]
+            if dep_basename.endswith('.a'):
+                dep_basename = dep_basename[:-2]
             ldflags += ' -l"%s"' % (dep_basename)
         else:
             raise StandardError('unknown target type: ' + dependency_type)
 
-    return deps, flags, ldflags
+    return deps, implicit_files, flags, ldflags
 
 
 def write_target_sources_ninja(config_ctx, ninja_path, ninja_writer, sources, rule_map, rule_flags_map):
@@ -673,13 +743,7 @@ def write_target_ninja(config_ctx, ninja_path, ninja_writer, data):
     target = dict(data)
     conditions = [config_ctx.format(i) for i in target.pop('conditions', [])]
 
-    SYSTEM = config_ctx.get('__system', platform.system()).lower()
-    DEFAULT_OS = platform.system()
-    if DEFAULT_OS == 'Darwin':
-        DEFAULT_OS = 'apple'
-    OS = config_ctx.get('__os', DEFAULT_OS).lower()
-    ARCH = config_ctx.get('__arch', platform.machine()).lower()
-    ABI = config_ctx.get('__abi', 'unknown').lower()
+    SYSTEM, OS, ARCH, ABI = get_platform_info(config_ctx)
 
     for condition in conditions:
         cond = target.pop('condition')
@@ -708,7 +772,7 @@ def write_target_ninja(config_ctx, ninja_path, ninja_writer, data):
     cppflags = config_ctx.format(target.pop('cppflags', ''))
     ldflags = config_ctx.format(target.pop('ldflags', ''))
     objflags = config_ctx.format(target.pop('objflags', ''))
-    deps, dep_flags, dep_ldflags = find_dependencies(config_ctx, ninja_path, dependencies)
+    deps, implicit_files, dep_flags, dep_ldflags = find_dependencies(config_ctx, ninja_path, dependencies)
     cflags += dep_flags
     cppflags += dep_flags
     ldflags += dep_ldflags
@@ -754,15 +818,13 @@ def write_target_ninja(config_ctx, ninja_path, ninja_writer, data):
             paths, rule_map, rule_flags_map
         )
     inputs = list(object_paths)
-
+    output_path = calc_output_path(config_ctx, name, type_name)
     if type_name == 'executable':
-        ldflags += ' -execute'
-        output_path = calc_temp_path(config_ctx, os.path.join('bin', name))
-        if OS == 'windows' and not output_path.endswith('.exe'):
-            output_path += '.exe'
+        ldflags += config_ctx.get('__executable_flags', '')
         ninja_writer.build(
             output_path, '__ld',
             inputs=inputs + deps,
+            implicit=implicit_files,
             variables={
                 '__ld_flags': ldflags,
             },
@@ -772,17 +834,11 @@ def write_target_ninja(config_ctx, ninja_path, ninja_writer, data):
             inputs=output_path
         )
     elif type_name == 'dynamic_library':
-        ldflags += ' -dynamic'
-        output_path = calc_temp_path(config_ctx, os.path.join('lib', name))
-        if OS == 'windows':
-            if not output_path.endswith('.dll'):
-                output_path += '.dll'
-        else:
-            if not output_path.endswith('.so'):
-                output_path += '.so'
+        ldflags += config_ctx.get('__dynamic_library_flags', '')
         ninja_writer.build(
             output_path, '__ld',
             inputs=inputs + deps,
+            implicit=implicit_files,
             variables={
                 '__ld_flags': ldflags,
             },
@@ -792,16 +848,11 @@ def write_target_ninja(config_ctx, ninja_path, ninja_writer, data):
             inputs=output_path
         )
     elif type_name == 'static_library':
-        ldflags += ' -static'
-        output_path = calc_temp_path(config_ctx, os.path.join('lib', name))
-        if not output_path.endswith('.a'):
-            output_path += '.a'
+        ldflags += config_ctx.get('__static_library_flags', '')
         ninja_writer.build(
-            output_path, '__ld',
+            output_path, '__ar',
             inputs=inputs + deps,
-            variables={
-                '__ld_flags': ldflags,
-            },
+            implicit=implicit_files
         )
         ninja_writer.build(
             name, 'phony',

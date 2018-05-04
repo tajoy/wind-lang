@@ -10,7 +10,8 @@ def find(parms):
     env = dict(os.environ)
     binpath = env.get('PKG_CONFIG', 'pkg-config')
     deps = []
+    implicit_files = []
     ldflags = subprocess.check_output([binpath, '--libs', parms])
     flags = subprocess.check_output([binpath, '--cflags', parms])
-    return deps, flags, ldflags
+    return deps, implicit_files, flags, ldflags
 
