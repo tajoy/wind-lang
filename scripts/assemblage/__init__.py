@@ -1005,7 +1005,12 @@ def clean(options, config_ctx=None):
     if config_ctx is None:
         config_ctx = config_context(options)
     temp_path = config_ctx.getOrDefault('__temp_path', os.path.join(os.path.curdir, 'build'))
-    os.remove(temp_path)
+    if os.path.exists(temp_path):
+        shutil.rmtree(temp_path)
+    if os.path.exists('.ninja_deps'):
+        os.remove('.ninja_deps')
+    if os.path.exists('.ninja_log'):
+        os.remove('.ninja_log')
 
 
 import plugins
