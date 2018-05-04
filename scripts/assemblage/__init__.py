@@ -542,20 +542,21 @@ def find_dependency_by_plugin(config_ctx, ninja_path, plugin_name, plugin_param)
     global REGISTERED_LIBRARY_PLUGINS
     plugin_deps = None
     plugin_implicit_files = []
-    plugin_flags = None
+    plugin_cflags = None
+    plugin_cppflags = None
     plugin_ldflags = None
     error = None
 
     if not plugin_name in REGISTERED_LIBRARY_PLUGINS:
         error = StandardError('plugin "%s" not found' % (plugin_name))
-        return plugin_deps, plugin_implicit_files, plugin_flags, plugin_ldflags, error
+        return plugin_deps, plugin_implicit_files, plugin_cflags, plugin_cppflags, plugin_ldflags, error
 
     fn = REGISTERED_LIBRARY_PLUGINS[plugin_name]
     try:
-        plugin_deps, plugin_implicit_files, plugin_flags, plugin_ldflags = fn(plugin_param)
+        plugin_deps, plugin_implicit_files, plugin_cflags, plugin_cppflags, plugin_ldflags = fn(plugin_param)
     except Exception as e:
         error = e
-    return plugin_deps, plugin_implicit_files, plugin_flags, plugin_ldflags, error
+    return plugin_deps, plugin_implicit_files, plugin_cflags, plugin_cppflags, plugin_ldflags, error
     
 
 def calc_output_path(config_ctx, name, type_name):
@@ -591,7 +592,8 @@ def find_dependencies(config_ctx, ninja_path, dependencies):
     target_map = config_ctx['__target_map']
     deps = []
     implicit_files = []
-    flags = ''
+    cflags = ''
+    cppflags = ''
     ldflags = ''
     dependency_target = None
     re_plugin = re.compile(r'^@plugin:([^/]*)//(.*)')
@@ -600,7 +602,7 @@ def find_dependencies(config_ctx, ninja_path, dependencies):
         if match_obj:
             plugin_name = match_obj.group(1)
             plugin_param = match_obj.group(2)
-            plugin_deps, plugin_implicit_files, plugin_flags, plugin_ldflags, error = find_dependency_by_plugin(config_ctx, ninja_path, plugin_name, plugin_param)
+            plugin_deps, plugin_implicit_files, plugin_cflags, plugin_cppflags, plugin_ldflags, error = find_dependency_by_plugin(config_ctx, ninja_path, plugin_name, plugin_param)
             if plugin_deps is None or plugin_ldflags is None:
                 raise StandardError(
                     'plugin "%s" can not find out dependency by "%s": \n%s' % (
@@ -609,7 +611,8 @@ def find_dependencies(config_ctx, ninja_path, dependencies):
                     )
             deps += as_list(plugin_deps)
             implicit_files += as_list(plugin_implicit_files)
-            flags += plugin_flags
+            cflags += plugin_cflags
+            cppflags += plugin_cppflags
             ldflags += plugin_ldflags
             continue
         
@@ -619,10 +622,12 @@ def find_dependencies(config_ctx, ninja_path, dependencies):
                 dep_dir = os.path.dirname(dep_path)
                 dep_include_dir = os.path.join(dep_dir, 'include')
                 if os.path.isdir(dep_include_dir):
-                    flags += ' -I"%s"' % (dep_include_dir)
+                    cflags += ' -I"%s"' % (dep_include_dir)
+                    cppflags += ' -I"%s"' % (dep_include_dir)
                 dep_include_dir = os.path.join(dep_dir, '..', 'include')
                 if os.path.isdir(dep_include_dir):
-                    flags += ' -I"%s"' % (dep_include_dir)
+                    cflags += ' -I"%s"' % (dep_include_dir)
+                    ppflags += ' -I"%s"' % (dep_include_dir)
                 if dep_path.endswith('.so') or dep_path.endswith('.dll'):
                     dep_dir = os.path.dirname(dep_path)
                     ldflags += ' -L"%s"' % (dep_dir)
@@ -662,7 +667,8 @@ def find_dependencies(config_ctx, ninja_path, dependencies):
             dep_include_dirs = dependency_target['include_dirs']
             for include_dir in dep_include_dirs:
                 full_path = get_rel_path(config_ctx, ninja_path, include_dir) or include_dir
-                flags += ' -I "%s"' % (full_path)
+                cflags += ' -I "%s"' % (full_path)
+                cppflags += ' -I "%s"' % (full_path)
         if dependency_type == 'executable':
             raise StandardError('can not dependency on a executable: ' + dependency)
         elif dependency_type == 'dynamic_library':
@@ -689,7 +695,7 @@ def find_dependencies(config_ctx, ninja_path, dependencies):
         else:
             raise StandardError('unknown target type: ' + dependency_type)
 
-    return deps, implicit_files, flags, ldflags
+    return deps, implicit_files, cflags, cppflags, ldflags
 
 
 def write_target_sources_ninja(config_ctx, ninja_path, ninja_writer, sources, rule_map, rule_flags_map):
@@ -772,9 +778,9 @@ def write_target_ninja(config_ctx, ninja_path, ninja_writer, data):
     cppflags = config_ctx.format(target.pop('cppflags', ''))
     ldflags = config_ctx.format(target.pop('ldflags', ''))
     objflags = config_ctx.format(target.pop('objflags', ''))
-    deps, implicit_files, dep_flags, dep_ldflags = find_dependencies(config_ctx, ninja_path, dependencies)
-    cflags += dep_flags
-    cppflags += dep_flags
+    deps, implicit_files, dep_cflags, dep_cppflags, dep_ldflags = find_dependencies(config_ctx, ninja_path, dependencies)
+    cflags += dep_cflags
+    cppflags += dep_cppflags
     ldflags += dep_ldflags
 
     for include_dir in include_dirs:

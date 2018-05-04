@@ -13,6 +13,7 @@ def find(parms):
     deps = []
     implicit_files = []
     ldflags = subprocess.check_output([binpath, '--libs', parms])
-    flags = subprocess.check_output([binpath, '--cppflags', parms])
-    return deps, implicit_files, flags, ldflags
+    cflags = subprocess.check_output([binpath, '--cflags', parms])
+    cppflags = subprocess.check_output([binpath, '--cxxflags', parms])
+    return deps, implicit_files, cflags, cppflags, ldflags
 
