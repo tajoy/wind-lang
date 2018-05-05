@@ -70,7 +70,7 @@ def get_platform_info(config_ctx):
 
 def find_exec_path(config_ctx, exec_name):
     cross_compile_root = config_ctx.get('__cross_compile_root', None)
-    SYSTEM, OS, ARCH, ABI = get_platform_info(config_ctx)
+    _, OS, _, _ = get_platform_info(config_ctx)
     bin_paths = os.environ['PATH'].split(os.path.pathsep)
     exists_xcrun = False
     for path in bin_paths:
@@ -392,7 +392,7 @@ def embed_ninja(config_ctx, ninja_path, ninja_writer):
         ld_flags += ' -L "%s"' % (os.path.join(sdk_root, 'usr', 'lib'))
 
     if OS == 'apple' or OS == 'ios':
-        config_ctx.set('__executable_flags', ' -execute -L"%s/usr/lib" -lcrt1.10.6.o' % (sdk_root))
+        config_ctx.set('__executable_flags', ' -execute ')
         config_ctx.set('__dynamic_library_flags', ' -dylib -undefined dynamic_lookup')
     else:
         config_ctx.set('__executable_flags', '')
@@ -413,7 +413,7 @@ def embed_ninja(config_ctx, ninja_path, ninja_writer):
         description='compile(cpp) $out',
         depfile='$out.d'
     )
-
+ 
     ninja_writer.rule(
         '__obj',
         '"%s" %s $__obj_flags $in -o $out' % (cc_path, obj_flags),

@@ -3,7 +3,7 @@
 #include <stdlib.h>
 
 
-#include "core/types.h"
+#include "core/wl_types.h"
 
 int main(int argc, const char** args) {
     
